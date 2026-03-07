@@ -99,13 +99,13 @@ $recent_activities = $conn->query("
 
                     <!-- Simple button group, no gradient -->
                     <div class="flex gap-2">
-                        <a href="../parcels/receive.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <a href="./receive.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-box mr-1 text-[#6e6e6e]"></i> Receive
                         </a>
-                        <a href="../distribution/add.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <a href="./distribution/add.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-file mr-1 text-[#6e6e6e]"></i> Add Document
                         </a>
-                        <a href="../newspapers/add.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <a href="./newspapers/add.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-newspaper mr-1 text-[#6e6e6e]"></i> Add Newspaper
                         </a>
                     </div>
