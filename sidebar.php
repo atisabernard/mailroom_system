@@ -77,16 +77,16 @@
 
             <!-- Parcels -->
             <div class="text-xs text-[#9e9e9e] px-3 pt-5 pb-1 sidebar-text">Parcels</div>
-            <a href="./receive.php"
-                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == '/parcels/receive.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
+            <a href="./parcels.php"
+                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './parcels.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-inbox w-4"></i>
-                <span class="sidebar-text">Receive Parcel</span>
+                <span class="sidebar-text">Parcels</span>
             </a>
-            <a href="./pickup.php"
+            <!--<a href="./pickup.php"
                 class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == '/parcels/pickup.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-truck w-4"></i>
                 <span class="sidebar-text">Parcel Pickup</span>
-            </a>
+            </a>-->
 
             <!-- Distribution -->
             <div class="text-xs text-[#9e9e9e] px-3 pt-5 pb-1 sidebar-text">Distribution</div>

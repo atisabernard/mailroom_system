@@ -31,7 +31,81 @@ function generateIssueNumber($category_name, $date_received)
     return $category_prefix . '-' . $date_prefix . '-' . $random_suffix;
 }
 
-// ========== HANDLE FORM SUBMISSIONS ==========
+// ========== CATEGORY HANDLERS ==========
+
+// Handle Add Category
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_category_submit'])) {
+    $category_name = trim($_POST['category_name']);
+    $description = trim($_POST['description']);
+
+    if (!empty($category_name)) {
+        $stmt = $conn->prepare("INSERT INTO newspaper_categories (category_name, description) VALUES (?, ?)");
+        $stmt->bind_param("ss", $category_name, $description);
+
+        if ($stmt->execute()) {
+            setToast('success', "Category added successfully!");
+        } else {
+            setToast('error', "Error adding category: " . $conn->error);
+        }
+        $stmt->close();
+    } else {
+        setToast('error', "Category name is required");
+    }
+
+    header('Location: list.php');
+    exit();
+}
+
+// Handle Edit Category
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['edit_category_submit'])) {
+    $id = (int)$_POST['category_id'];
+    $category_name = trim($_POST['category_name']);
+    $description = trim($_POST['description']);
+
+    if (!empty($category_name)) {
+        $stmt = $conn->prepare("UPDATE newspaper_categories SET category_name = ?, description = ? WHERE id = ?");
+        $stmt->bind_param("ssi", $category_name, $description, $id);
+
+        if ($stmt->execute()) {
+            setToast('success', "Category updated successfully!");
+        } else {
+            setToast('error', "Error updating category: " . $conn->error);
+        }
+        $stmt->close();
+    } else {
+        setToast('error', "Category name is required");
+    }
+
+    header('Location: list.php');
+    exit();
+}
+
+// Handle Delete Category
+if (isset($_GET['delete_category'])) {
+    $id = (int)$_GET['delete_category'];
+
+    // Check if category is used in newspapers
+    $check = $conn->query("SELECT COUNT(*) as count FROM newspapers WHERE category_id = $id");
+    $row = $check->fetch_assoc();
+
+    if ($row['count'] > 0) {
+        setToast('error', "Cannot delete: This category has $row[count] newspaper(s)");
+    } else {
+        $stmt = $conn->prepare("DELETE FROM newspaper_categories WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        if ($stmt->execute()) {
+            setToast('success', "Category deleted successfully!");
+        } else {
+            setToast('error', "Error deleting category: " . $conn->error);
+        }
+        $stmt->close();
+    }
+
+    header('Location: list.php');
+    exit();
+}
+
+// ========== NEWSPAPER HANDLERS ==========
 
 // Handle Add Newspaper
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_newspaper_submit'])) {
@@ -204,14 +278,14 @@ while ($cat = $categories_query->fetch_assoc()) {
     $all_categories[] = $cat;
 }
 
-// Get available newspapers with their categories for distribution modal
+// Get available newspapers with their categories for available modal
 $available_newspapers = $conn->query("SELECT n.*, nc.category_name, nc.id as category_id 
                                      FROM newspapers n 
                                      LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
                                      WHERE n.available_copies > 0 
                                      ORDER BY nc.category_name, n.newspaper_name");
 
-// Group newspapers by category for distribution
+// Group newspapers by category for available modal
 $newspapers_by_category = [];
 $category_totals = [];
 
@@ -232,12 +306,12 @@ if ($available_newspapers && $available_newspapers->num_rows > 0) {
     }
 }
 
-// Pagination settings
+// Pagination settings for newspapers
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $limit = 10;
 $offset = ($page - 1) * $limit;
 
-// Filter settings
+// Filter settings for newspapers
 $filter_category = isset($_GET['filter_category']) ? (int)$_GET['filter_category'] : 0;
 $filter_status = isset($_GET['filter_status']) ? $_GET['filter_status'] : '';
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
@@ -276,18 +350,54 @@ $all_newspapers = $conn->query("SELECT n.*, nc.category_name
                                    CASE WHEN '$sort_by' = 'available_copies' THEN n.available_copies END $sort_order
                                LIMIT $offset, $limit");
 
-// Get distribution history
+// Pagination settings for distribution history
+$dist_page = isset($_GET['dist_page']) ? (int)$_GET['dist_page'] : 1;
+$dist_limit = 10;
+$dist_offset = ($dist_page - 1) * $dist_limit;
+
+// Filter settings for distribution history
+$dist_search = isset($_GET['dist_search']) ? trim($_GET['dist_search']) : '';
+$dist_filter_category = isset($_GET['dist_filter_category']) ? (int)$_GET['dist_filter_category'] : 0;
+$dist_sort_by = isset($_GET['dist_sort_by']) ? $_GET['dist_sort_by'] : 'date_distributed';
+$dist_sort_order = isset($_GET['dist_sort_order']) ? $_GET['dist_sort_order'] : 'DESC';
+
+// Build query for distribution history with filters
+$dist_where_clauses = [];
+if (!empty($dist_search)) {
+    $dist_where_clauses[] = "(n.newspaper_name LIKE '%$dist_search%' OR n.newspaper_number LIKE '%$dist_search%' OR d.distributed_to LIKE '%$dist_search%' OR d.department LIKE '%$dist_search%')";
+}
+if ($dist_filter_category > 0) {
+    $dist_where_clauses[] = "n.category_id = $dist_filter_category";
+}
+$dist_where_sql = !empty($dist_where_clauses) ? "WHERE " . implode(" AND ", $dist_where_clauses) : "";
+
+// Get total count for distribution pagination
+$dist_count_query = "SELECT COUNT(*) as total FROM distribution d 
+                     JOIN newspapers n ON d.newspaper_id = n.id 
+                     LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
+                     $dist_where_sql";
+$dist_count_result = $conn->query($dist_count_query);
+$dist_total_rows = $dist_count_result->fetch_assoc()['total'];
+$dist_total_pages = ceil($dist_total_rows / $dist_limit);
+
+// Get distribution history with filters, sorting and pagination
 $distribution_history = $conn->query("SELECT d.*, n.newspaper_name, n.newspaper_number, nc.category_name 
                                       FROM distribution d 
                                       JOIN newspapers n ON d.newspaper_id = n.id 
                                       LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
-                                      ORDER BY d.date_distributed DESC, d.id DESC 
-                                      LIMIT 50");
+                                      $dist_where_sql
+                                      ORDER BY 
+                                          CASE WHEN '$dist_sort_by' = 'date_distributed' THEN d.date_distributed END $dist_sort_order,
+                                          CASE WHEN '$dist_sort_by' = 'newspaper_name' THEN n.newspaper_name END $dist_sort_order,
+                                          CASE WHEN '$dist_sort_by' = 'category_name' THEN nc.category_name END $dist_sort_order,
+                                          CASE WHEN '$dist_sort_by' = 'distributed_to' THEN d.distributed_to END $dist_sort_order,
+                                          CASE WHEN '$dist_sort_by' = 'department' THEN d.department END $dist_sort_order
+                                      LIMIT $dist_offset, $dist_limit");
 
 // Get statistics
 $total_available = $conn->query("SELECT SUM(available_copies) as total FROM newspapers")->fetch_assoc()['total'] ?? 0;
 $total_newspapers = $conn->query("SELECT COUNT(*) as count FROM newspapers")->fetch_assoc()['count'] ?? 0;
-$total_categories = count($newspapers_by_category);
+$total_categories = $conn->query("SELECT COUNT(*) as count FROM newspaper_categories")->fetch_assoc()['count'] ?? 0;
 $total_distributed_today = $conn->query("SELECT COUNT(*) as count FROM distribution WHERE date_distributed = CURDATE()")->fetch_assoc()['count'] ?? 0;
 $total_distributed_month = $conn->query("SELECT COUNT(*) as count FROM distribution WHERE MONTH(date_distributed) = MONTH(CURDATE())")->fetch_assoc()['count'] ?? 0;
 
@@ -529,6 +639,66 @@ include './sidebar.php';
         .toast.fade-out {
             animation: fadeOut 0.3s ease-in-out forwards;
         }
+
+        /* Quick action button at top */
+        .quick-action-btn {
+            background-color: #1e1e1e;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            font-size: 0.875rem;
+        }
+
+        .quick-action-btn:hover {
+            background-color: #2d2d2d;
+            transform: scale(1.02);
+        }
+
+        .quick-action-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 0.5rem;
+            background-color: white;
+            border: 1px solid #e5e5e5;
+            border-radius: 0.375rem;
+            padding: 0.5rem;
+            min-width: 200px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            display: none;
+            z-index: 50;
+        }
+
+        .quick-action-menu.show {
+            display: block;
+        }
+
+        .quick-action-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: #1e1e1e;
+            text-decoration: none;
+            border-radius: 0.375rem;
+            transition: background-color 0.2s;
+            cursor: pointer;
+        }
+
+        .quick-action-item:hover {
+            background-color: #f5f5f4;
+        }
+
+        .quick-action-item i {
+            width: 20px;
+            color: #6e6e6e;
+        }
     </style>
 </head>
 
@@ -538,26 +708,41 @@ include './sidebar.php';
 
     <div class="flex">
         <main class="flex-1 ml-60 min-h-screen">
-            <!-- Header -->
+            <!-- Header with Quick Action -->
             <div class="px-8 py-6 border-b border-[#e5e5e5] bg-white">
                 <div class="flex justify-between items-center">
                     <div>
-                        <h1 class="text-2xl font-medium text-[#1e1e1e]">Newspaper List</h1>
+                        <h1 class="text-2xl font-medium text-[#1e1e1e]">Newspaper Management</h1>
                         <p class="text-sm text-[#6e6e6e] mt-1">Manage newspapers and track distributions</p>
                     </div>
-                    <div class="flex gap-2">
-                        <a href="./index.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-regular fa-home mr-1 text-[#6e6e6e]"></i>Dashboard
-                        </a>
-                        <button onclick="openAddModal()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-regular fa-plus mr-1 text-[#6e6e6e]"></i>Add Newspaper
+
+                    <!-- Quick Action Button at Top -->
+                    <div class="relative">
+                        <button class="quick-action-btn" onclick="toggleQuickMenu()">
+                            <i class="fa-regular fa-bolt"></i>
+                            <span>Quick Actions</span>
+                            <i class="fa-regular fa-chevron-down text-sm"></i>
                         </button>
-                        <button onclick="openDistributeModal()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-green-600 hover:bg-green-700 text-white">
-                            <i class="fa-regular fa-hand-holding-hand mr-1"></i>Distribute
-                        </button>
-                        <a href="newspaper_categories.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-regular fa-tags mr-1 text-[#6e6e6e]"></i>Categories
-                        </a>
+
+                        <!-- Quick Action Menu -->
+                        <div id="quickActionMenu" class="quick-action-menu">
+                            <div class="quick-action-item" onclick="openAddModal()">
+                                <i class="fa-regular fa-plus"></i>
+                                <span>Add Newspaper</span>
+                            </div>
+                            <div class="quick-action-item" onclick="openAddCategoryModal()">
+                                <i class="fa-regular fa-tags"></i>
+                                <span>Add Category</span>
+                            </div>
+                            <div class="quick-action-item" onclick="openAvailableModal()">
+                                <i class="fa-regular fa-eye"></i>
+                                <span>View Available</span>
+                            </div>
+                            <div class="quick-action-item" onclick="openDistributeModal()">
+                                <i class="fa-regular fa-hand-holding-hand"></i>
+                                <span>Distribute</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -600,99 +785,104 @@ include './sidebar.php';
                     </div>
                 <?php endif; ?>
 
-                <!-- Filters -->
-                <div class="bg-white border border-[#e5e5e5] rounded-md p-4 mb-6">
-                    <form method="GET" class="flex flex-wrap gap-3 items-center">
-                        <input type="hidden" name="page" value="1">
-
-                        <div class="flex-1 min-w-[200px]">
-                            <input type="text" name="search"
-                                placeholder="Search by name or issue number..."
-                                value="<?php echo htmlspecialchars($search); ?>"
-                                class="w-full px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                        </div>
-
-                        <select name="filter_category" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                            <option value="0">All Categories</option>
-                            <?php foreach ($all_categories as $cat): ?>
-                                <option value="<?php echo $cat['id']; ?>" <?php echo $filter_category == $cat['id'] ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($cat['category_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-
-                        <select name="filter_status" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                            <option value="">All Status</option>
-                            <option value="available" <?php echo $filter_status == 'available' ? 'selected' : ''; ?>>Available</option>
-                            <option value="partial" <?php echo $filter_status == 'partial' ? 'selected' : ''; ?>>Partial</option>
-                            <option value="distributed" <?php echo $filter_status == 'distributed' ? 'selected' : ''; ?>>Distributed</option>
-                        </select>
-
-                        <select name="sort_by" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                            <option value="date_received" <?php echo $sort_by == 'date_received' ? 'selected' : ''; ?>>Sort by Date</option>
-                            <option value="newspaper_name" <?php echo $sort_by == 'newspaper_name' ? 'selected' : ''; ?>>Sort by Name</option>
-                            <option value="category_name" <?php echo $sort_by == 'category_name' ? 'selected' : ''; ?>>Sort by Category</option>
-                            <option value="status" <?php echo $sort_by == 'status' ? 'selected' : ''; ?>>Sort by Status</option>
-                            <option value="available_copies" <?php echo $sort_by == 'available_copies' ? 'selected' : ''; ?>>Sort by Copies</option>
-                        </select>
-
-                        <select name="sort_order" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                            <option value="DESC" <?php echo $sort_order == 'DESC' ? 'selected' : ''; ?>>Descending</option>
-                            <option value="ASC" <?php echo $sort_order == 'ASC' ? 'selected' : ''; ?>>Ascending</option>
-                        </select>
-
-                        <button type="submit" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4]">
-                            <i class="fa-regular fa-sliders mr-1"></i>Apply
-                        </button>
-
-                        <a href="list.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4]">
-                            <i class="fa-regular fa-rotate-right mr-1"></i>Reset
-                        </a>
-                    </form>
-
-                    <!-- Active Filters Display -->
-                    <?php if ($filter_category > 0 || !empty($filter_status) || !empty($search)): ?>
-                        <div class="flex flex-wrap gap-2 mt-3">
-                            <?php if ($filter_category > 0):
-                                $cat_name = '';
-                                foreach ($all_categories as $cat) {
-                                    if ($cat['id'] == $filter_category) {
-                                        $cat_name = $cat['category_name'];
-                                        break;
-                                    }
-                                }
-                            ?>
-                                <span class="filter-badge">
-                                    Category: <?php echo htmlspecialchars($cat_name); ?>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['filter_category' => 0, 'page' => 1])); ?>" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                                        <i class="fa-regular fa-xmark"></i>
-                                    </a>
-                                </span>
-                            <?php endif; ?>
-
-                            <?php if (!empty($filter_status)): ?>
-                                <span class="filter-badge">
-                                    Status: <?php echo ucfirst($filter_status); ?>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['filter_status' => '', 'page' => 1])); ?>" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                                        <i class="fa-regular fa-xmark"></i>
-                                    </a>
-                                </span>
-                            <?php endif; ?>
-
-                            <?php if (!empty($search)): ?>
-                                <span class="filter-badge">
-                                    Search: "<?php echo htmlspecialchars($search); ?>"
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['search' => '', 'page' => 1])); ?>" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                                        <i class="fa-regular fa-xmark"></i>
-                                    </a>
-                                </span>
-                            <?php endif; ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
-
                 <!-- Newspapers Table -->
                 <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden mb-6">
+                    <div class="px-4 py-3 bg-[#fafafa] border-b border-[#e5e5e5]">
+                        <h3 class="text-sm font-medium text-[#1e1e1e]">Newspapers</h3>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="p-4 border-b border-[#e5e5e5]">
+                        <form method="GET" class="flex flex-wrap gap-3 items-center">
+                            <input type="hidden" name="page" value="1">
+
+                            <div class="flex-1 min-w-[200px]">
+                                <input type="text" name="search"
+                                    placeholder="Search by name or issue number..."
+                                    value="<?php echo htmlspecialchars($search); ?>"
+                                    class="w-full px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                            </div>
+
+                            <select name="filter_category" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="0">All Categories</option>
+                                <?php foreach ($all_categories as $cat): ?>
+                                    <option value="<?php echo $cat['id']; ?>" <?php echo $filter_category == $cat['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($cat['category_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+
+                            <select name="filter_status" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="">All Status</option>
+                                <option value="available" <?php echo $filter_status == 'available' ? 'selected' : ''; ?>>Available</option>
+                                <option value="partial" <?php echo $filter_status == 'partial' ? 'selected' : ''; ?>>Partial</option>
+                                <option value="distributed" <?php echo $filter_status == 'distributed' ? 'selected' : ''; ?>>Distributed</option>
+                            </select>
+
+                            <select name="sort_by" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="date_received" <?php echo $sort_by == 'date_received' ? 'selected' : ''; ?>>Sort by Date</option>
+                                <option value="newspaper_name" <?php echo $sort_by == 'newspaper_name' ? 'selected' : ''; ?>>Sort by Name</option>
+                                <option value="category_name" <?php echo $sort_by == 'category_name' ? 'selected' : ''; ?>>Sort by Category</option>
+                                <option value="status" <?php echo $sort_by == 'status' ? 'selected' : ''; ?>>Sort by Status</option>
+                                <option value="available_copies" <?php echo $sort_by == 'available_copies' ? 'selected' : ''; ?>>Sort by Copies</option>
+                            </select>
+
+                            <select name="sort_order" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="DESC" <?php echo $sort_order == 'DESC' ? 'selected' : ''; ?>>Descending</option>
+                                <option value="ASC" <?php echo $sort_order == 'ASC' ? 'selected' : ''; ?>>Ascending</option>
+                            </select>
+
+                            <button type="submit" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4]">
+                                <i class="fa-regular fa-sliders mr-1"></i>Apply
+                            </button>
+
+                            <a href="list.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4]">
+                                <i class="fa-regular fa-rotate-right mr-1"></i>Reset
+                            </a>
+                        </form>
+
+                        <!-- Active Filters Display -->
+                        <?php if ($filter_category > 0 || !empty($filter_status) || !empty($search)): ?>
+                            <div class="flex flex-wrap gap-2 mt-3">
+                                <?php if ($filter_category > 0):
+                                    $cat_name = '';
+                                    foreach ($all_categories as $cat) {
+                                        if ($cat['id'] == $filter_category) {
+                                            $cat_name = $cat['category_name'];
+                                            break;
+                                        }
+                                    }
+                                ?>
+                                    <span class="filter-badge">
+                                        Category: <?php echo htmlspecialchars($cat_name); ?>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['filter_category' => 0, 'page' => 1])); ?>" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                                            <i class="fa-regular fa-xmark"></i>
+                                        </a>
+                                    </span>
+                                <?php endif; ?>
+
+                                <?php if (!empty($filter_status)): ?>
+                                    <span class="filter-badge">
+                                        Status: <?php echo ucfirst($filter_status); ?>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['filter_status' => '', 'page' => 1])); ?>" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                                            <i class="fa-regular fa-xmark"></i>
+                                        </a>
+                                    </span>
+                                <?php endif; ?>
+
+                                <?php if (!empty($search)): ?>
+                                    <span class="filter-badge">
+                                        Search: "<?php echo htmlspecialchars($search); ?>"
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['search' => '', 'page' => 1])); ?>" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                                            <i class="fa-regular fa-xmark"></i>
+                                        </a>
+                                    </span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Newspapers Table -->
                     <div class="overflow-x-auto">
                         <table>
                             <thead>
@@ -801,12 +991,64 @@ include './sidebar.php';
                     <?php endif; ?>
                 </div>
 
-                <!-- Distribution History -->
+                <!-- Distribution History with Filters and Pagination -->
                 <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden">
-                    <div class="px-4 py-3 bg-[#fafafa] border-b border-[#e5e5e5] flex justify-between items-center">
-                        <h3 class="text-sm font-medium text-[#1e1e1e]">Recent Distributions</h3>
-                        <span class="text-xs text-[#6e6e6e]">Last 50 entries</span>
+                    <div class="px-4 py-3 bg-[#fafafa] border-b border-[#e5e5e5]">
+                        <h3 class="text-sm font-medium text-[#1e1e1e]">Distribution History</h3>
                     </div>
+
+                    <!-- Distribution Filters -->
+                    <div class="p-4 border-b border-[#e5e5e5]">
+                        <form method="GET" class="flex flex-wrap gap-3 items-center">
+                            <input type="hidden" name="dist_page" value="1">
+                            <!-- Preserve newspaper filters -->
+                            <?php if (!empty($search)): ?>
+                                <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
+                            <?php endif; ?>
+                            <?php if ($filter_category > 0): ?>
+                                <input type="hidden" name="filter_category" value="<?php echo $filter_category; ?>">
+                            <?php endif; ?>
+                            <?php if (!empty($filter_status)): ?>
+                                <input type="hidden" name="filter_status" value="<?php echo $filter_status; ?>">
+                            <?php endif; ?>
+                            <input type="hidden" name="sort_by" value="<?php echo $sort_by; ?>">
+                            <input type="hidden" name="sort_order" value="<?php echo $sort_order; ?>">
+
+                            <div class="flex-1 min-w-[200px]">
+                                <input type="text" name="dist_search"
+                                    placeholder="Search by newspaper, recipient, department..."
+                                    value="<?php echo htmlspecialchars($dist_search); ?>"
+                                    class="w-full px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                            </div>
+
+                            <select name="dist_filter_category" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="0">All Categories</option>
+                                <?php foreach ($all_categories as $cat): ?>
+                                    <option value="<?php echo $cat['id']; ?>" <?php echo $dist_filter_category == $cat['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($cat['category_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+
+                            <select name="dist_sort_by" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="date_distributed" <?php echo $dist_sort_by == 'date_distributed' ? 'selected' : ''; ?>>Sort by Date</option>
+                                <option value="newspaper_name" <?php echo $dist_sort_by == 'newspaper_name' ? 'selected' : ''; ?>>Sort by Newspaper</option>
+                                <option value="category_name" <?php echo $dist_sort_by == 'category_name' ? 'selected' : ''; ?>>Sort by Category</option>
+                                <option value="distributed_to" <?php echo $dist_sort_by == 'distributed_to' ? 'selected' : ''; ?>>Sort by Recipient</option>
+                                <option value="department" <?php echo $dist_sort_by == 'department' ? 'selected' : ''; ?>>Sort by Department</option>
+                            </select>
+
+                            <select name="dist_sort_order" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
+                                <option value="DESC" <?php echo $dist_sort_order == 'DESC' ? 'selected' : ''; ?>>Descending</option>
+                                <option value="ASC" <?php echo $dist_sort_order == 'ASC' ? 'selected' : ''; ?>>Ascending</option>
+                            </select>
+
+                            <button type="submit" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4]">
+                                <i class="fa-regular fa-sliders mr-1"></i>Apply
+                            </button>
+                        </form>
+                    </div>
+
                     <div class="overflow-x-auto">
                         <table>
                             <thead>
@@ -843,9 +1085,107 @@ include './sidebar.php';
                             </tbody>
                         </table>
                     </div>
+
+                    <!-- Distribution Pagination -->
+                    <?php if ($dist_total_pages > 1): ?>
+                        <div class="px-4 py-3 bg-[#fafafa] border-t border-[#e5e5e5]">
+                            <div class="flex justify-between items-center">
+                                <div class="text-xs text-[#6e6e6e]">
+                                    Showing <?php echo $dist_offset + 1; ?> to <?php echo min($dist_offset + $dist_limit, $dist_total_rows); ?> of <?php echo $dist_total_rows; ?> entries
+                                </div>
+                                <div class="pagination">
+                                    <?php if ($dist_page > 1): ?>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => 1])); ?>" class="pagination-item">
+                                            <i class="fa-regular fa-chevrons-left"></i>
+                                        </a>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $dist_page - 1])); ?>" class="pagination-item">
+                                            <i class="fa-regular fa-chevron-left"></i>
+                                        </a>
+                                    <?php endif; ?>
+
+                                    <?php
+                                    $dist_start = max(1, $dist_page - 2);
+                                    $dist_end = min($dist_total_pages, $dist_page + 2);
+                                    for ($i = $dist_start; $i <= $dist_end; $i++):
+                                    ?>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $i])); ?>"
+                                            class="pagination-item <?php echo $i == $dist_page ? 'active' : ''; ?>">
+                                            <?php echo $i; ?>
+                                        </a>
+                                    <?php endfor; ?>
+
+                                    <?php if ($dist_page < $dist_total_pages): ?>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $dist_page + 1])); ?>" class="pagination-item">
+                                            <i class="fa-regular fa-chevron-right"></i>
+                                        </a>
+                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $dist_total_pages])); ?>" class="pagination-item">
+                                            <i class="fa-regular fa-chevrons-right"></i>
+                                        </a>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Available Newspapers Modal -->
+    <div id="availableModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50">
+        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-3xl p-5 max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-base font-medium text-[#1e1e1e]">Available Newspapers</h3>
+                <button type="button" onclick="closeAvailableModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                    <i class="fa-regular fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3">
+                <?php if (!empty($newspapers_by_category)): ?>
+                    <?php foreach ($newspapers_by_category as $category_name => $category_data): ?>
+                        <?php $newspapers = $category_data['newspapers']; ?>
+                        <div class="border border-[#e5e5e5] rounded-md overflow-hidden">
+                            <div class="px-4 py-2 bg-[#fafafa] border-b border-[#e5e5e5] flex justify-between items-center">
+                                <span class="text-sm font-medium"><?php echo htmlspecialchars($category_name); ?></span>
+                                <span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+                                    <?php echo $category_totals[$category_name]; ?> copies total
+                                </span>
+                            </div>
+                            <div class="p-3">
+                                <?php foreach ($newspapers as $paper): ?>
+                                    <div class="flex justify-between items-center py-2 border-b border-[#f0f0f0] last:border-0">
+                                        <div>
+                                            <span class="text-sm font-medium"><?php echo htmlspecialchars($paper['newspaper_name']); ?></span>
+                                            <span class="text-xs text-[#6e6e6e] ml-2 issue-number"><?php echo htmlspecialchars($paper['newspaper_number']); ?></span>
+                                        </div>
+                                        <div class="flex items-center gap-3">
+                                            <span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+                                                <?php echo $paper['available_copies']; ?> copies
+                                            </span>
+                                            <span class="text-xs text-[#6e6e6e]">
+                                                Received: <?php echo date('M j, Y', strtotime($paper['date_received'])); ?>
+                                            </span>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <div class="text-center py-8 text-[#6e6e6e]">
+                        No newspapers available at the moment
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="flex justify-end mt-4">
+                <button type="button" onclick="closeAvailableModal()"
+                    class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                    Close
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Add Newspaper Modal -->
@@ -923,7 +1263,7 @@ include './sidebar.php';
         </div>
     </div>
 
-    <!-- Update Copies Modal -->
+    <!-- Update Newspaper Copies Modal -->
     <div id="updateModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50">
         <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-md p-5">
             <div class="flex justify-between items-center mb-4">
@@ -951,6 +1291,48 @@ include './sidebar.php';
                         class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                         <i class="fa-regular fa-floppy-disk mr-1 text-[#6e6e6e]"></i>
                         Update
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Category Modal -->
+    <div id="addCategoryModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50">
+        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-md p-5">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-base font-medium text-[#1e1e1e]">Add Category</h3>
+                <button type="button" onclick="closeAddCategoryModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                    <i class="fa-regular fa-xmark"></i>
+                </button>
+            </div>
+
+            <form method="POST" action="list.php">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Category Name</label>
+                        <input type="text" name="category_name" required
+                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                            placeholder="e.g., Daily News, Sports, Business">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Description</label>
+                        <textarea name="description" rows="3"
+                            placeholder="Optional description"
+                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-6">
+                    <button type="button" onclick="closeAddCategoryModal()"
+                        class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        Cancel
+                    </button>
+                    <button type="submit" name="add_category_submit"
+                        class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <i class="fa-regular fa-floppy-disk mr-1 text-[#6e6e6e]"></i>
+                        Add Category
                     </button>
                 </div>
             </form>
@@ -1110,6 +1492,21 @@ include './sidebar.php';
             });
         <?php endif; ?>
 
+        // ========== QUICK ACTION MENU ==========
+        function toggleQuickMenu() {
+            document.getElementById('quickActionMenu').classList.toggle('show');
+        }
+
+        // Close quick menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('quickActionMenu');
+            const button = document.querySelector('.quick-action-btn');
+
+            if (!button.contains(event.target) && !menu.contains(event.target)) {
+                menu.classList.remove('show');
+            }
+        });
+
         // ========== ISSUE NUMBER PREVIEW ==========
         function updateIssuePreview() {
             const categorySelect = document.getElementById('categorySelect');
@@ -1129,10 +1526,11 @@ include './sidebar.php';
             }
         }
 
-        // ========== MODAL FUNCTIONS ==========
+        // ========== NEWSPAPER MODAL FUNCTIONS ==========
         function openAddModal() {
             document.getElementById('addModal').style.display = 'flex';
             updateIssuePreview();
+            document.getElementById('quickActionMenu').classList.remove('show');
         }
 
         function closeAddModal() {
@@ -1150,10 +1548,31 @@ include './sidebar.php';
             document.getElementById('updateModal').style.display = 'none';
         }
 
+        // ========== AVAILABLE MODAL FUNCTIONS ==========
+        function openAvailableModal() {
+            document.getElementById('availableModal').style.display = 'flex';
+            document.getElementById('quickActionMenu').classList.remove('show');
+        }
+
+        function closeAvailableModal() {
+            document.getElementById('availableModal').style.display = 'none';
+        }
+
+        // ========== CATEGORY MODAL FUNCTIONS ==========
+        function openAddCategoryModal() {
+            document.getElementById('addCategoryModal').style.display = 'flex';
+            document.getElementById('quickActionMenu').classList.remove('show');
+        }
+
+        function closeAddCategoryModal() {
+            document.getElementById('addCategoryModal').style.display = 'none';
+        }
+
         function openDistributeModal() {
             document.getElementById('distributeModal').style.display = 'flex';
             deselectAllCategories();
             updateCounts();
+            document.getElementById('quickActionMenu').classList.remove('show');
         }
 
         function closeDistributeModal() {
@@ -1294,6 +1713,8 @@ include './sidebar.php';
             const addModal = document.getElementById('addModal');
             const updateModal = document.getElementById('updateModal');
             const distributeModal = document.getElementById('distributeModal');
+            const availableModal = document.getElementById('availableModal');
+            const addCategoryModal = document.getElementById('addCategoryModal');
 
             if (event.target == addModal) {
                 closeAddModal();
@@ -1304,6 +1725,12 @@ include './sidebar.php';
             if (event.target == distributeModal) {
                 closeDistributeModal();
             }
+            if (event.target == availableModal) {
+                closeAvailableModal();
+            }
+            if (event.target == addCategoryModal) {
+                closeAddCategoryModal();
+            }
         }
 
         // ========== KEYBOARD SHORTCUTS ==========
@@ -1312,6 +1739,9 @@ include './sidebar.php';
                 closeAddModal();
                 closeUpdateModal();
                 closeDistributeModal();
+                closeAvailableModal();
+                closeAddCategoryModal();
+                document.getElementById('quickActionMenu').classList.remove('show');
             }
         });
     </script>
