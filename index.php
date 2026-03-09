@@ -219,13 +219,13 @@ try {
 
                     <!-- Quick Action Buttons - Updated paths to match your files -->
                     <div class="flex gap-2">
-                        <a href="receive.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <a href="./parcels.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-gift mr-1 text-[#6e6e6e]"></i> Receive Parcel
                         </a>
-                        <a href="add.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <a href="./document.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-file mr-1 text-[#6e6e6e]"></i> Add Document
                         </a>
-                        <a href="newspaper_categories.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                        <a href="./newspaper_categories.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-newspaper mr-1 text-[#6e6e6e]"></i> Newspapers
                         </a>
                     </div>

@@ -315,6 +315,19 @@ $recent_parcels = $conn->query("
             opacity: 0.5;
             pointer-events: none;
         }
+
+        /* Filter panel */
+        .filter-panel {
+            transition: all 0.3s ease;
+        }
+
+        .filter-panel.collapsed {
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+            padding: 0;
+            margin: 0;
+        }
     </style>
 </head>
 
@@ -373,7 +386,7 @@ $recent_parcels = $conn->query("
                             </div>
                             <div class="flex flex-wrap gap-2 w-full md:w-auto">
                                 <div class="relative flex-1 md:flex-none">
-                                    <i class="fa-regular fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
+                                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                                     <input type="text" id="receiveSearch" placeholder="Search parcels..."
                                         class="pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] w-full md:w-64">
                                 </div>
@@ -540,7 +553,7 @@ $recent_parcels = $conn->query("
                         <div class="flex flex-col md:flex-row gap-3">
                             <div class="flex-1">
                                 <div class="relative">
-                                    <i class="fa-regular fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
+                                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                                     <input type="text" id="searchPickup" placeholder="Search by tracking ID, sender, or recipient..."
                                         class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
                                 </div>
@@ -640,74 +653,105 @@ $recent_parcels = $conn->query("
                     </div>
                 </div>
 
-                <!-- All Records Tab -->
+                <!-- REDESIGNED ALL RECORDS TAB -->
                 <div id="recordsTab" class="tab-content hidden">
                     <!-- Quick Actions Bar -->
                     <div class="bg-white border border-[#e5e5e5] rounded-md p-4 mb-6">
-                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div class="flex flex-wrap justify-between items-center gap-4">
                             <div class="flex flex-wrap gap-2">
                                 <button onclick="exportToCSV()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
-                                    <i class="fa-solid fa-file-excel mr-1 text-[#6e6e6e]"></i> Export CSV
+                                    <i class="fa-regular fa-file-excel mr-1 text-[#6e6e6e]"></i> Export CSV
                                 </button>
                                 <button onclick="exportToPDF()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
-                                    <i class="fa-solid fa-file-pdf mr-1 text-[#6e6e6e]"></i> Export PDF
+                                    <i class="fa-regular fa-file-pdf mr-1 text-[#6e6e6e]"></i> Export PDF
                                 </button>
                                 <button onclick="printRecords()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
                                     <i class="fa-solid fa-print mr-1 text-[#6e6e6e]"></i> Print
                                 </button>
                             </div>
                             <div class="text-sm text-[#6e6e6e]">
-                                Total Records: <span id="totalRecords"><?php echo $total_records; ?></span>
+                                Total Records: <span class="font-medium text-[#1e1e1e]"><?php echo $total_records; ?></span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Advanced Search -->
-                    <div class="bg-white border border-[#e5e5e5] rounded-md p-4 mb-6">
-                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-                            <div>
-                                <input type="text" id="searchTracking" placeholder="Tracking ID"
-                                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                    <!-- Simplified Search Panel -->
+                    <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden mb-6">
+                        <!-- Search Header with Toggle -->
+                        <div class="px-5 py-3 bg-[#fafafa] border-b border-[#e5e5e5] flex justify-between items-center cursor-pointer" onclick="toggleSearchPanel()">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-magnifying-glass text-[#6e6e6e]"></i>
+                                <span class="text-sm font-medium text-[#1e1e1e]">Search & Filter</span>
                             </div>
-                            <div>
-                                <input type="text" id="searchSender" placeholder="Sender"
-                                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                            <div class="flex items-center gap-3">
+                                <span class="text-xs text-[#6e6e6e] hidden md:inline" id="activeFiltersCount">No active filters</span>
+                                <i class="fa-solid fa-chevron-down text-[#6e6e6e] transition-transform" id="searchToggleIcon"></i>
                             </div>
-                            <div>
-                                <input type="text" id="searchRecipient" placeholder="Recipient"
-                                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                        </div>
+
+                        <!-- Search Panel Content (Collapsible) -->
+                        <div id="searchPanel" class="p-5 filter-panel">
+                            <!-- Quick Search Bar (Primary) -->
+                            <div class="mb-4">
+                                <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-2">Quick Search</label>
+                                <div class="flex gap-2">
+                                    <div class="relative flex-1">
+                                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
+                                        <input type="text" id="quickSearch" placeholder="Search by tracking ID, sender, recipient, or picker..."
+                                            class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]">
+                                    </div>
+                                    <button onclick="applyQuickSearch()" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] whitespace-nowrap">
+                                        Search
+                                    </button>
+                                    <button onclick="clearSearch()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                </div>
                             </div>
-                            <div>
-                                <input type="text" id="searchPicker" placeholder="Picked By"
-                                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                            </div>
-                            <div>
-                                <select id="filterStatus" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
-                                    <option value="all">All Status</option>
-                                    <option value="pending">Pending</option>
-                                    <option value="picked-up">Picked Up</option>
-                                </select>
-                            </div>
-                            <div>
-                                <input type="date" id="dateFrom" placeholder="From Date"
-                                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                            </div>
-                            <div>
-                                <input type="date" id="dateTo" placeholder="To Date"
-                                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                            </div>
-                            <div class="flex gap-2">
-                                <button onclick="filterRecords()" class="flex-1 px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                                    <i class="fa-solid fa-magnifying-glass mr-1"></i> Search
-                                </button>
-                                <button onclick="resetFilters()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                                    <i class="fa-solid fa-rotate-right"></i>
-                                </button>
+
+                            <!-- Advanced Filters (Hidden by default, can be expanded) -->
+                            <div class="border-t border-[#e5e5e5] pt-4">
+                                <div class="flex justify-between items-center mb-3">
+                                    <span class="text-xs text-[#6e6e6e] uppercase tracking-wide">Advanced Filters</span>
+                                    <button type="button" onclick="toggleAdvancedFilters()" class="text-xs text-[#6e6e6e] hover:text-[#1e1e1e] flex items-center gap-1">
+                                        <span id="advancedToggleText">Show More</span>
+                                        <i class="fa-solid fa-chevron-down text-xs" id="advancedToggleIcon"></i>
+                                    </button>
+                                </div>
+
+                                <div id="advancedFilters" class="hidden grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div>
+                                        <label class="block text-xs text-[#6e6e6e] mb-1">Status</label>
+                                        <select id="filterStatus" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
+                                            <option value="all">All Status</option>
+                                            <option value="pending">Pending</option>
+                                            <option value="picked-up">Picked Up</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-[#6e6e6e] mb-1">From Date</label>
+                                        <input type="date" id="dateFrom" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-[#6e6e6e] mb-1">To Date</label>
+                                        <input type="date" id="dateTo" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                    </div>
+                                </div>
+
+                                <!-- Filter Action Buttons -->
+                                <div class="flex justify-end gap-2 mt-4">
+                                    <button onclick="resetFilters()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                                        Reset All
+                                    </button>
+                                    <button onclick="applyAdvancedFilters()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] font-medium">
+                                        Apply Filters
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Records Table -->
+                    <!-- Records Table - Condensed View -->
                     <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden">
                         <div class="px-5 py-4 border-b border-[#e5e5e5] bg-[#fafafa] flex justify-between items-center">
                             <h2 class="text-sm font-medium text-[#1e1e1e]">All Parcel Records</h2>
@@ -721,13 +765,9 @@ $recent_parcels = $conn->query("
                                         <th class="text-xs">Description</th>
                                         <th class="text-xs">Sender</th>
                                         <th class="text-xs">Recipient</th>
-                                        <th class="text-xs">Date Received</th>
-                                        <th class="text-xs">Received By</th>
+                                        <th class="text-xs">Received</th>
                                         <th class="text-xs">Status</th>
-                                        <th class="text-xs">Picked By</th>
-                                        <th class="text-xs">Picker Phone</th>
-                                        <th class="text-xs">Designation</th>
-                                        <th class="text-xs">Date Picked</th>
+                                        <th class="text-xs">Pickup Info</th>
                                         <th class="text-xs">Actions</th>
                                     </tr>
                                 </thead>
@@ -738,17 +778,17 @@ $recent_parcels = $conn->query("
                                     ?>
                                         <tr class="hover:bg-[#fafafa] record-row"
                                             data-status="<?php echo strtolower(str_replace(' ', '-', $parcel['status'])); ?>"
+                                            data-search="<?php echo strtolower($parcel['tracking_id'] . ' ' . $parcel['sender'] . ' ' . $parcel['addressed_to'] . ' ' . ($parcel['picked_by'] ?? '')); ?>"
                                             data-tracking="<?php echo strtolower($parcel['tracking_id']); ?>"
                                             data-sender="<?php echo strtolower($parcel['sender']); ?>"
                                             data-recipient="<?php echo strtolower($parcel['addressed_to']); ?>"
                                             data-picker="<?php echo strtolower($parcel['picked_by'] ?? ''); ?>"
                                             data-date="<?php echo $parcel['date_received']; ?>">
                                             <td class="text-sm font-mono text-[#1e1e1e]"><?php echo $parcel['tracking_id']; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo substr($parcel['description'], 0, 30); ?>...</td>
+                                            <td class="text-sm text-[#1e1e1e] max-w-[200px] truncate"><?php echo substr($parcel['description'], 0, 30); ?>...</td>
                                             <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['sender']; ?></td>
                                             <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['addressed_to']; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['date_received']; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['received_by']; ?></td>
+                                            <td class="text-sm text-[#1e1e1e] whitespace-nowrap"><?php echo date('M j, Y', strtotime($parcel['date_received'])); ?></td>
                                             <td class="text-sm">
                                                 <?php if ($parcel['status'] == 'Pending'): ?>
                                                     <span class="badge badge-warning">Pending</span>
@@ -756,21 +796,36 @@ $recent_parcels = $conn->query("
                                                     <span class="badge badge-success">Picked Up</span>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['picked_by'] ?? '-'; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['picker_phone'] ?? '-'; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['picker_designation'] ?? '-'; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $parcel['date_picked'] ?? '-'; ?></td>
-                                            <td class="text-sm">
-                                                <?php if ($parcel['status'] == 'Pending'): ?>
-                                                    <button onclick="openPickupModal(<?php echo $parcel['id']; ?>, '<?php echo $parcel['tracking_id']; ?>')"
-                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e] mr-2" title="Process Pickup">
-                                                        <i class="fa-solid fa-truck"></i>
-                                                    </button>
+                                            <td class="text-sm text-[#1e1e1e]">
+                                                <?php if ($parcel['picked_by']): ?>
+                                                    <div class="text-xs">
+                                                        <span class="font-medium"><?php echo $parcel['picked_by']; ?></span>
+                                                        <?php if ($parcel['date_picked']): ?>
+                                                            <span class="text-[#6e6e6e] block"><?php echo date('M j, Y', strtotime($parcel['date_picked'])); ?></span>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php else: ?>
+                                                    <span class="text-[#9e9e9e] text-xs">Not picked up</span>
                                                 <?php endif; ?>
-                                                <button onclick="viewParcelDetails(<?php echo htmlspecialchars(json_encode($parcel)); ?>)"
-                                                    class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="View Details">
-                                                    <i class="fa-regular fa-eye"></i>
-                                                </button>
+                                            </td>
+                                            <td class="text-sm">
+                                                <div class="flex items-center gap-2">
+                                                    <button onclick="viewParcelDetails(<?php echo htmlspecialchars(json_encode($parcel)); ?>)"
+                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="View Details">
+                                                        <i class="fa-regular fa-eye"></i>
+                                                    </button>
+                                                    <?php if ($parcel['status'] == 'Pending'): ?>
+                                                        <button onclick="openPickupModal(<?php echo $parcel['id']; ?>, '<?php echo $parcel['tracking_id']; ?>')"
+                                                            class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="Process Pickup">
+                                                            <i class="fa-solid fa-truck"></i>
+                                                        </button>
+                                                    <?php else: ?>
+                                                        <button onclick="viewPickupDetails(<?php echo $parcel['id']; ?>, '<?php echo $parcel['tracking_id']; ?>', '<?php echo $parcel['picked_by']; ?>', '<?php echo $parcel['picker_phone']; ?>', '<?php echo $parcel['picker_designation']; ?>', '<?php echo $parcel['date_picked']; ?>')"
+                                                            class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="View Pickup Details">
+                                                            <i class="fa-solid fa-circle-info"></i>
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
                                             </td>
                                         </tr>
                                     <?php endwhile; ?>
@@ -1293,15 +1348,69 @@ $recent_parcels = $conn->query("
             }
         }
 
-        // Advanced search for Records tab
-        function filterRecords() {
-            const tracking = document.getElementById('searchTracking').value.toLowerCase();
-            const sender = document.getElementById('searchSender').value.toLowerCase();
-            const recipient = document.getElementById('searchRecipient').value.toLowerCase();
-            const picker = document.getElementById('searchPicker').value.toLowerCase();
+        // REDESIGNED RECORDS TAB SEARCH FUNCTIONS
+        let searchPanelVisible = true;
+
+        function toggleSearchPanel() {
+            const panel = document.getElementById('searchPanel');
+            const icon = document.getElementById('searchToggleIcon');
+
+            if (searchPanelVisible) {
+                panel.style.display = 'none';
+                icon.style.transform = 'rotate(0deg)';
+            } else {
+                panel.style.display = 'block';
+                icon.style.transform = 'rotate(180deg)';
+            }
+            searchPanelVisible = !searchPanelVisible;
+        }
+
+        function toggleAdvancedFilters() {
+            const advanced = document.getElementById('advancedFilters');
+            const toggleText = document.getElementById('advancedToggleText');
+            const toggleIcon = document.getElementById('advancedToggleIcon');
+
+            if (advanced.classList.contains('hidden')) {
+                advanced.classList.remove('hidden');
+                toggleText.textContent = 'Show Less';
+                toggleIcon.style.transform = 'rotate(180deg)';
+            } else {
+                advanced.classList.add('hidden');
+                toggleText.textContent = 'Show More';
+                toggleIcon.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        // Quick search
+        function applyQuickSearch() {
+            const searchTerm = document.getElementById('quickSearch').value.toLowerCase();
+            const rows = document.getElementsByClassName('record-row');
+
+            let visibleCount = 0;
+            for (let row of rows) {
+                const searchText = row.getAttribute('data-search');
+                const show = searchText.includes(searchTerm);
+                row.style.display = show ? '' : 'none';
+                if (show) visibleCount++;
+            }
+
+            document.getElementById('totalRecords').textContent = visibleCount;
+
+            if (visibleCount === 0) {
+                showToast('No matching records found', 'info');
+            } else {
+                showToast(`Found ${visibleCount} matching records`, 'success');
+            }
+
+            updateActiveFiltersCount();
+        }
+
+        // Advanced filters
+        function applyAdvancedFilters() {
             const status = document.getElementById('filterStatus').value;
             const dateFrom = document.getElementById('dateFrom').value;
             const dateTo = document.getElementById('dateTo').value;
+            const quickSearchTerm = document.getElementById('quickSearch').value.toLowerCase();
 
             const rows = document.getElementsByClassName('record-row');
             let visibleCount = 0;
@@ -1309,12 +1418,19 @@ $recent_parcels = $conn->query("
             for (let row of rows) {
                 let show = true;
 
-                if (tracking && !row.getAttribute('data-tracking').includes(tracking)) show = false;
-                if (show && sender && !row.getAttribute('data-sender').includes(sender)) show = false;
-                if (show && recipient && !row.getAttribute('data-recipient').includes(recipient)) show = false;
-                if (show && picker && !row.getAttribute('data-picker').includes(picker)) show = false;
-                if (show && status !== 'all' && row.getAttribute('data-status') !== status) show = false;
+                // Apply quick search if present
+                if (quickSearchTerm) {
+                    const searchText = row.getAttribute('data-search');
+                    if (!searchText.includes(quickSearchTerm)) show = false;
+                }
 
+                // Apply status filter
+                if (show && status !== 'all') {
+                    const rowStatus = row.getAttribute('data-status');
+                    if (rowStatus !== status) show = false;
+                }
+
+                // Apply date range
                 if (show && dateFrom) {
                     const rowDate = row.getAttribute('data-date');
                     if (rowDate < dateFrom) show = false;
@@ -1335,19 +1451,58 @@ $recent_parcels = $conn->query("
             } else {
                 showToast(`Found ${visibleCount} matching records`, 'success');
             }
+
+            updateActiveFiltersCount();
         }
 
-        function resetFilters() {
-            document.getElementById('searchTracking').value = '';
-            document.getElementById('searchSender').value = '';
-            document.getElementById('searchRecipient').value = '';
-            document.getElementById('searchPicker').value = '';
+        function clearSearch() {
+            document.getElementById('quickSearch').value = '';
             document.getElementById('filterStatus').value = 'all';
             document.getElementById('dateFrom').value = '';
             document.getElementById('dateTo').value = '';
-            filterRecords();
-            showToast('Filters reset', 'info');
+
+            const rows = document.getElementsByClassName('record-row');
+            for (let row of rows) {
+                row.style.display = '';
+            }
+
+            document.getElementById('totalRecords').textContent = rows.length;
+            showToast('Search cleared', 'info');
+            updateActiveFiltersCount();
         }
+
+        function resetFilters() {
+            clearSearch();
+        }
+
+        function updateActiveFiltersCount() {
+            const quickSearch = document.getElementById('quickSearch').value;
+            const status = document.getElementById('filterStatus').value;
+            const dateFrom = document.getElementById('dateFrom').value;
+            const dateTo = document.getElementById('dateTo').value;
+
+            let count = 0;
+            if (quickSearch) count++;
+            if (status !== 'all') count++;
+            if (dateFrom) count++;
+            if (dateTo) count++;
+
+            const filterSpan = document.getElementById('activeFiltersCount');
+            if (filterSpan) {
+                if (count === 0) {
+                    filterSpan.textContent = 'No active filters';
+                } else {
+                    filterSpan.textContent = `${count} active filter${count > 1 ? 's' : ''}`;
+                }
+            }
+        }
+
+        // Search on Enter key
+        document.getElementById('quickSearch')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                applyQuickSearch();
+            }
+        });
 
         // Refresh receive tab
         function refreshReceiveTab() {
@@ -1452,25 +1607,23 @@ $recent_parcels = $conn->query("
         // Export functions for Records tab
         function exportToCSV() {
             const rows = [];
-            const headers = ['Tracking ID', 'Description', 'Sender', 'Recipient', 'Date Received', 'Received By',
-                'Status', 'Picked By', 'Picker Phone', 'Designation', 'Date Picked'
-            ];
+            const headers = ['Tracking ID', 'Description', 'Sender', 'Recipient', 'Date Received', 'Status', 'Picked By', 'Date Picked'];
             rows.push(headers.join(','));
 
             document.querySelectorAll('.record-row:not([style*="display: none"])').forEach(row => {
                 const cells = row.querySelectorAll('td');
+                const status = cells[5].querySelector('.badge')?.textContent.trim() || cells[5].textContent.trim();
+                const pickupInfo = cells[6].textContent.trim().replace(/\s+/g, ' ').replace(/\n/g, ' ');
+
                 const rowData = [
                     `"${cells[0].textContent}"`,
                     `"${cells[1].textContent}"`,
                     `"${cells[2].textContent}"`,
                     `"${cells[3].textContent}"`,
                     `"${cells[4].textContent}"`,
-                    `"${cells[5].textContent}"`,
-                    `"${cells[6].textContent.trim()}"`,
-                    `"${cells[7].textContent}"`,
-                    `"${cells[8].textContent}"`,
-                    `"${cells[9].textContent}"`,
-                    `"${cells[10].textContent}"`
+                    `"${status}"`,
+                    `"${pickupInfo.split(' ')[0]}"`,
+                    `"${pickupInfo.includes('Not picked') ? '' : pickupInfo.split(' ').slice(1).join(' ')}"`
                 ];
                 rows.push(rowData.join(','));
             });
@@ -1521,8 +1674,7 @@ $recent_parcels = $conn->query("
                                 <th>Recipient</th>
                                 <th>Date Received</th>
                                 <th>Status</th>
-                                <th>Picked By</th>
-                                <th>Date Picked</th>
+                                <th>Pickup Information</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1537,9 +1689,8 @@ $recent_parcels = $conn->query("
                         <td>${cells[2].textContent}</td>
                         <td>${cells[3].textContent}</td>
                         <td>${cells[4].textContent}</td>
-                        <td>${cells[6].textContent.trim()}</td>
-                        <td>${cells[7].textContent}</td>
-                        <td>${cells[10].textContent}</td>
+                        <td>${cells[5].innerHTML.replace(/<[^>]*>/g, '')}</td>
+                        <td>${cells[6].innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()}</td>
                     </tr>
                 `);
             });

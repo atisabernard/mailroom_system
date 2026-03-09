@@ -15,6 +15,23 @@ if ($types_result) {
     }
 }
 
+// Function to generate serial number
+function generateSerialNumber($conn)
+{
+    // Get the last serial number
+    $result = $conn->query("SELECT serial_number FROM documents ORDER BY id DESC LIMIT 1");
+    if ($result && $result->num_rows > 0) {
+        $last_serial = $result->fetch_assoc()['serial_number'];
+        // Extract the number part and increment
+        if (preg_match('/DOC-(\d+)/', $last_serial, $matches)) {
+            $num = intval($matches[1]) + 1;
+            return 'DOC-' . str_pad($num, 6, '0', STR_PAD_LEFT);
+        }
+    }
+    // Default starting serial
+    return 'DOC-000001';
+}
+
 // Handle Add Document
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_submit'])) {
     $document_name = $_POST['document_name'];
@@ -22,6 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_submit'])) {
     $origin = $_POST['origin'];
     $copies_received = (int)$_POST['copies_received'];
     $date_received = $_POST['date_received'];
+
+    // Generate serial number
+    $serial_number = generateSerialNumber($conn);
 
     // If type_id is provided, get the type name for backward compatibility
     $type_name = '';
@@ -36,11 +56,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_submit'])) {
         $type_query->close();
     }
 
-    $stmt = $conn->prepare("INSERT INTO documents (document_name, type, type_id, origin, copies_received, date_received) VALUES (?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssisss", $document_name, $type_name, $type_id, $origin, $copies_received, $date_received);
+    $stmt = $conn->prepare("INSERT INTO documents (document_name, type, type_id, origin, copies_received, date_received, serial_number) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("ssissss", $document_name, $type_name, $type_id, $origin, $copies_received, $date_received, $serial_number);
 
     if ($stmt->execute()) {
-        $_SESSION['toast'] = ['type' => 'success', 'message' => 'Document added successfully!'];
+        $_SESSION['toast'] = ['type' => 'success', 'message' => 'Document added successfully! Serial: ' . $serial_number];
     } else {
         $_SESSION['toast'] = ['type' => 'error', 'message' => 'Error: ' . $conn->error];
     }
@@ -72,6 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_submit'])) {
     $origin = $_POST['origin'];
     $copies_received = (int)$_POST['copies_received'];
     $date_received = $_POST['date_received'];
+    $serial_number = $_POST['serial_number']; // Keep existing serial number
 
     // If type_id is provided, get the type name for backward compatibility
     $type_name = '';
@@ -131,12 +152,13 @@ $count_params = [];
 $count_types = "";
 
 if (!empty($search)) {
-    $count_query .= " AND (d.document_name LIKE ? OR d.origin LIKE ? OR dt.type_name LIKE ?)";
+    $count_query .= " AND (d.document_name LIKE ? OR d.origin LIKE ? OR dt.type_name LIKE ? OR d.serial_number LIKE ?)";
     $search_param = "%$search%";
     $count_params[] = $search_param;
     $count_params[] = $search_param;
     $count_params[] = $search_param;
-    $count_types .= "sss";
+    $count_params[] = $search_param;
+    $count_types .= "ssss";
 }
 
 if (!empty($type_filter) && $type_filter !== 'all') {
@@ -165,12 +187,13 @@ $params = [];
 $types = "";
 
 if (!empty($search)) {
-    $query .= " AND (d.document_name LIKE ? OR d.origin LIKE ? OR dt.type_name LIKE ?)";
+    $query .= " AND (d.document_name LIKE ? OR d.origin LIKE ? OR dt.type_name LIKE ? OR d.serial_number LIKE ?)";
     $search_param = "%$search%";
     $params[] = $search_param;
     $params[] = $search_param;
     $params[] = $search_param;
-    $types .= "sss";
+    $params[] = $search_param;
+    $types .= "ssss";
 }
 
 if (!empty($type_filter) && $type_filter !== 'all') {
@@ -242,6 +265,12 @@ if (isset($_SESSION['toast'])) {
             font-weight: 500;
             color: #4a4a4a;
             font-size: 0.75rem;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background-color: #f0f0f0;
         }
 
         td {
@@ -306,6 +335,16 @@ if (isset($_SESSION['toast'])) {
         .modal {
             transition: opacity 0.3s ease;
         }
+
+        .sort-icon {
+            font-size: 0.7rem;
+            margin-left: 0.25rem;
+            opacity: 0.5;
+        }
+
+        th.active-sort .sort-icon {
+            opacity: 1;
+        }
     </style>
 </head>
 
@@ -358,10 +397,14 @@ if (isset($_SESSION['toast'])) {
                     <form method="GET" class="flex flex-col md:flex-row gap-3" id="filterForm">
                         <div class="flex-1">
                             <input type="text" name="search" id="searchInput"
-                                placeholder="Search by name, origin, or type..."
+                                placeholder="Search by serial, name, origin, or type..."
                                 value="<?php echo htmlspecialchars($search); ?>"
+                                autocomplete="off"
                                 class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
                         </div>
+                        <button type="submit" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                            <i class="fa-solid fa-magnifying-glass mr-1 text-[#6e6e6e]"></i>Search
+                        </button>
                         <select name="type_filter" id="typeFilter" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
                             <option value="all" <?php echo $type_filter == 'all' ? 'selected' : ''; ?>>All Types</option>
                             <?php foreach ($filter_types as $type): ?>
@@ -378,9 +421,7 @@ if (isset($_SESSION['toast'])) {
                             <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50 per page</option>
                             <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100 per page</option>
                         </select>
-                        <button type="submit" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-solid fa-magnifying-glass mr-1 text-[#6e6e6e]"></i>Search
-                        </button>
+
                         <a href="list.php" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                             <i class="fa-solid fa-rotate-right mr-1 text-[#6e6e6e]"></i>Clear
                         </a>
@@ -393,7 +434,8 @@ if (isset($_SESSION['toast'])) {
                         <table>
                             <thead>
                                 <tr class="bg-[#fafafa]">
-                                    <th class="text-xs">ID</th>
+                                    <th class="text-xs">S/N</th>
+                                    <th class="text-xs">Serial Number</th>
                                     <th class="text-xs">Document Name</th>
                                     <th class="text-xs">Type</th>
                                     <th class="text-xs">Origin</th>
@@ -404,13 +446,17 @@ if (isset($_SESSION['toast'])) {
                             </thead>
                             <tbody id="tableBody">
                                 <?php if ($documents && $documents->num_rows > 0): ?>
-                                    <?php while ($row = $documents->fetch_assoc()): ?>
+                                    <?php
+                                    $counter = $offset + 1;
+                                    while ($row = $documents->fetch_assoc()):
+                                    ?>
                                         <tr class="hover:bg-[#fafafa] document-row"
                                             data-id="<?php echo $row['id']; ?>"
                                             data-type="<?php echo htmlspecialchars(strtolower($row['type'] ?? '')); ?>"
                                             data-type-id="<?php echo $row['type_id'] ?? ''; ?>">
-                                            <td class="text-sm text-[#6e6e6e]"><?php echo $row['id']; ?></td>
-                                            <td class="text-sm font-medium text-[#1e1e1e]"><?php echo htmlspecialchars($row['document_name'] ?? ''); ?></td>
+                                            <td class="text-sm text-[#6e6e6e]"><?php echo $counter++; ?></td>
+                                            <td class="text-sm font-mono text-[#1e1e1e] font-medium"><?php echo htmlspecialchars($row['serial_number'] ?? 'DOC-000001'); ?></td>
+                                            <td class="text-sm text-[#1e1e1e]"><?php echo htmlspecialchars($row['document_name'] ?? ''); ?></td>
                                             <td class="text-sm text-[#1e1e1e]">
                                                 <?php if ($row['type_id']): ?>
                                                     <a href="document_types.php?action=view&id=<?php echo $row['type_id']; ?>"
@@ -444,7 +490,7 @@ if (isset($_SESSION['toast'])) {
                                     <?php endwhile; ?>
                                 <?php else: ?>
                                     <tr>
-                                        <td colspan="7" class="text-sm text-[#6e6e6e] text-center py-8">
+                                        <td colspan="8" class="text-sm text-[#6e6e6e] text-center py-8">
                                             No documents found. Add one to get started.
                                         </td>
                                     </tr>
@@ -569,6 +615,11 @@ if (isset($_SESSION['toast'])) {
                         </div>
                     </div>
 
+                    <div class="bg-[#fafafa] p-3 rounded-md">
+                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Serial Number</p>
+                        <p class="text-sm font-mono text-[#1e1e1e]">Auto-generated on save</p>
+                    </div>
+
                     <div class="pt-2">
                         <p class="text-xs text-[#6e6e6e] uppercase tracking-wide mb-2">Quick Actions</p>
                         <div class="grid grid-cols-2 gap-2">
@@ -576,7 +627,7 @@ if (isset($_SESSION['toast'])) {
                                 class="text-center px-2 py-1 text-xs border border-[#e5e5e5] rounded-md hover:bg-[#f5f5f4]">
                                 + New Type
                             </a>
-                            <a href="./document_type.php" target="_blank"
+                            <a href="./document_types.php" target="_blank"
                                 class="text-center px-2 py-1 text-xs border border-[#e5e5e5] rounded-md hover:bg-[#f5f5f4]">
                                 Manage Types
                             </a>
@@ -610,7 +661,13 @@ if (isset($_SESSION['toast'])) {
             </div>
             <form method="POST" id="editForm">
                 <input type="hidden" name="document_id" id="edit_id">
+                <input type="hidden" name="serial_number" id="edit_serial">
                 <div class="space-y-4">
+                    <div class="bg-[#fafafa] p-3 rounded-md">
+                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Serial Number</p>
+                        <p class="text-sm font-mono text-[#1e1e1e]" id="display_serial"></p>
+                    </div>
+
                     <div>
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Document Name</label>
                         <input type="text" name="document_name" id="edit_name" required
@@ -749,6 +806,8 @@ if (isset($_SESSION['toast'])) {
             const doc = documents.find(d => d.id == id);
             if (doc) {
                 document.getElementById('edit_id').value = doc.id;
+                document.getElementById('edit_serial').value = doc.serial_number || '';
+                document.getElementById('display_serial').textContent = doc.serial_number || 'DOC-000001';
                 document.getElementById('edit_name').value = doc.document_name || '';
                 document.getElementById('edit_type_id').value = doc.type_id || '';
                 document.getElementById('edit_origin').value = doc.origin || '';
@@ -771,6 +830,10 @@ if (isset($_SESSION['toast'])) {
                         <div>
                             <p class="text-xs text-[#6e6e6e] uppercase">ID</p>
                             <p class="text-sm">${doc.id}</p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-[#6e6e6e] uppercase">Serial Number</p>
+                            <p class="text-sm font-mono font-medium">${doc.serial_number || 'DOC-000001'}</p>
                         </div>
                         <div>
                             <p class="text-xs text-[#6e6e6e] uppercase">Document Name</p>
@@ -827,7 +890,7 @@ if (isset($_SESSION['toast'])) {
         // Export to CSV
         function exportToCSV() {
             const rows = [];
-            const headers = ['ID', 'Document Name', 'Type', 'Origin', 'Copies', 'Date Received'];
+            const headers = ['ID', 'Serial Number', 'Document Name', 'Type', 'Origin', 'Copies', 'Date Received'];
             rows.push(headers.join(','));
 
             <?php
@@ -840,6 +903,7 @@ if (isset($_SESSION['toast'])) {
             if ($export_result) {
                 while ($row = $export_result->fetch_assoc()) {
                     echo "rows.push(['" . $row['id'] . "', " .
+                        '"' . addslashes($row['serial_number'] ?? 'DOC-000001') . '", ' .
                         '"' . addslashes($row['document_name']) . '", ' .
                         '"' . addslashes($row['type'] ?? '') . '", ' .
                         '"' . addslashes($row['origin'] ?? '') . '", ' .
@@ -888,6 +952,7 @@ if (isset($_SESSION['toast'])) {
                         <thead>
                             <tr>
                                 <th>ID</th>
+                                <th>Serial Number</th>
                                 <th>Document Name</th>
                                 <th>Type</th>
                                 <th>Origin</th>
@@ -907,6 +972,7 @@ if (isset($_SESSION['toast'])) {
                                 while ($row = $print_result->fetch_assoc()) {
                                     echo "<tr>";
                                     echo "<td>" . $row['id'] . "</td>";
+                                    echo "<td>" . ($row['serial_number'] ?? 'DOC-000001') . "</td>";
                                     echo "<td>" . htmlspecialchars($row['document_name'] ?? '') . "</td>";
                                     echo "<td>" . htmlspecialchars($row['type'] ?? '-') . "</td>";
                                     echo "<td>" . htmlspecialchars($row['origin'] ?? '') . "</td>";
