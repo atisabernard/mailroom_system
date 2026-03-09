@@ -52,32 +52,32 @@
             <!-- Newspapers -->
             <div class="text-xs text-[#9e9e9e] px-3 pt-5 pb-1 sidebar-text">Newspapers</div>
             <a href="./newspaper_categories.php"
-                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './add.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
+                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './newspaper_categories.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-plus w-4"></i>
-                <span class="sidebar-text">Add Newspaper</span>
+                <span class="sidebar-text">Newspaper Categories</span>
             </a>
             <a href="./list.php"
                 class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './list.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-newspaper w-4"></i>
-                <span class="sidebar-text">Newspaper List</span>
+                <span class="sidebar-text">Newspaper Distribution</span>
             </a>
 
             <!-- Documents -->
             <div class="text-xs text-[#9e9e9e] px-3 pt-5 pb-1 sidebar-text">Documents</div>
             <a href="./documents.php"
-                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == '/documents/add.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
+                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './documents.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-upload w-4"></i>
                 <span class="sidebar-text">Add Document</span>
             </a>
             <a href="./document_type.php"
-                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == '/documents/list.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
+                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './document_type.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-file-lines w-4"></i>
-                <span class="sidebar-text">Document List</span>
+                <span class="sidebar-text">Document Type</span>
             </a>
             <!-- Distribution -->
             <div class="text-xs text-[#9e9e9e] px-3 pt-5 pb-1 sidebar-text">Distribution</div>
             <a href="./distribution.php"
-                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == '/distribution/add.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
+                class="flex items-center gap-3 px-3 py-2 text-sm rounded-md mb-1 <?= $current_page == './distribution.php' ? 'bg-[#f0f0f0] text-[#1e1e1e]' : 'text-[#6e6e6e] hover:text-[#1e1e1e] hover:bg-[#f5f5f4]'; ?>">
                 <i class="fa-solid fa-chart-line w-4"></i>
                 <span class="sidebar-text">Document Distribution</span>
             </a>
