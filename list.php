@@ -372,6 +372,23 @@ include './sidebar.php';
             font-size: 0.75rem;
         }
 
+        .action-btn {
+            color: #9e9e9e;
+            transition: color 0.2s;
+            margin: 0 0.25rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+        }
+
+        .action-btn:hover {
+            color: #1e1e1e;
+        }
+
+        .delete-btn:hover {
+            color: #dc2626;
+        }
+
         /* Toast notification */
         .toast-container {
             position: fixed;
@@ -493,6 +510,16 @@ include './sidebar.php';
         .quick-action-item i {
             width: 20px;
             color: #6e6e6e;
+        }
+
+        /* Modal styles */
+        .modal {
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-content {
+            max-height: 90vh;
+            overflow-y: auto;
         }
     </style>
 </head>
@@ -676,7 +703,7 @@ include './sidebar.php';
                             <tbody>
                                 <?php if ($all_newspapers && $all_newspapers->num_rows > 0): ?>
                                     <?php while ($paper = $all_newspapers->fetch_assoc()): ?>
-                                        <tr class="hover:bg-[#fafafa]">
+                                        <tr class="hover:bg-[#fafafa]" id="newspaper-row-<?php echo $paper['id']; ?>">
                                             <td class="text-sm text-[#6e6e6e]"><?php echo $paper['id']; ?></td>
                                             <td class="text-sm font-medium text-[#1e1e1e]"><?php echo htmlspecialchars($paper['newspaper_name']); ?></td>
                                             <td class="text-sm font-mono text-[#1e1e1e] issue-number"><?php echo htmlspecialchars($paper['newspaper_number']); ?></td>
@@ -700,15 +727,18 @@ include './sidebar.php';
                                             </td>
                                             <td class="text-sm">
                                                 <div class="flex gap-2">
+                                                    <button onclick="viewNewspaper(<?php echo htmlspecialchars(json_encode($paper)); ?>)"
+                                                        class="action-btn" title="View Details">
+                                                        <i class="fa-regular fa-eye"></i>
+                                                    </button>
                                                     <button onclick="openUpdateModal(<?php echo $paper['id']; ?>, '<?php echo htmlspecialchars($paper['newspaper_name']); ?>', <?php echo $paper['available_copies']; ?>)"
-                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                                                        class="action-btn" title="Edit">
                                                         <i class="fa-regular fa-pen-to-square"></i>
                                                     </button>
-                                                    <a href="?delete=<?php echo $paper['id']; ?>&<?php echo http_build_query($_GET); ?>"
-                                                        onclick="return confirm('Delete this newspaper?')"
-                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                                                    <button onclick="openDeleteModal(<?php echo $paper['id']; ?>, '<?php echo htmlspecialchars($paper['newspaper_name']); ?>', '<?php echo htmlspecialchars($paper['newspaper_number']); ?>')"
+                                                        class="action-btn delete-btn" title="Delete">
                                                         <i class="fa-regular fa-trash-can"></i>
-                                                    </a>
+                                                    </button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -921,6 +951,64 @@ include './sidebar.php';
         </div>
     </div>
 
+    <!-- View Newspaper Modal -->
+    <div id="viewModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal">
+        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-lg p-6 modal-content">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-medium text-[#1e1e1e]">Newspaper Details</h2>
+                <button type="button" onclick="closeViewModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <div id="viewContent" class="space-y-4">
+                <!-- Content will be filled by JavaScript -->
+            </div>
+
+            <div class="flex justify-end mt-4">
+                <button onclick="closeViewModal()"
+                    class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal">
+        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-medium text-[#1e1e1e]">Confirm Delete</h2>
+                <button type="button" onclick="closeDeleteModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <div class="py-2">
+                <p class="text-sm text-[#6e6e6e]">Are you sure you want to delete this newspaper?</p>
+                <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                    <p class="text-sm font-medium text-red-800" id="deleteNewspaperName"></p>
+                    <p class="text-xs text-red-600 mt-1" id="deleteIssueNumber"></p>
+                </div>
+                <p class="text-xs text-[#9e9e9e] mt-3">
+                    <i class="fa-regular fa-circle-info mr-1"></i>
+                    This action cannot be undone. The newspaper will be permanently deleted.
+                </p>
+            </div>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <button onclick="closeDeleteModal()"
+                    class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                    Cancel
+                </button>
+                <a href="#" id="confirmDeleteBtn"
+                    class="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700">
+                    Delete Permanently
+                </a>
+            </div>
+        </div>
+    </div>
+
     <script>
         // ========== TOAST NOTIFICATION ==========
         function showToast(type, message) {
@@ -1024,11 +1112,100 @@ include './sidebar.php';
             document.getElementById('addCategoryModal').style.display = 'none';
         }
 
+        // ========== VIEW MODAL FUNCTIONS ==========
+        function viewNewspaper(paper) {
+            const content = document.getElementById('viewContent');
+
+            // Determine status display
+            let statusClass = '';
+            let statusText = '';
+
+            if (paper.status == 'available') {
+                statusClass = 'bg-green-100 text-green-800';
+                statusText = 'Available';
+            } else if (paper.status == 'partial') {
+                statusClass = 'bg-yellow-100 text-yellow-800';
+                statusText = 'Partial';
+            } else {
+                statusClass = 'bg-red-100 text-red-800';
+                statusText = 'Distributed';
+            }
+
+            content.innerHTML = `
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="col-span-2">
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Newspaper</p>
+                        <p class="text-lg font-medium text-[#1e1e1e]">${escapeHtml(paper.newspaper_name)}</p>
+                    </div>
+                    <div class="col-span-2">
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Issue Number</p>
+                        <p class="text-sm font-mono text-[#1e1e1e]">${escapeHtml(paper.newspaper_number)}</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Category</p>
+                        <p class="text-sm">${escapeHtml(paper.category_name || 'Uncategorized')}</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Status</p>
+                        <span class="inline-block px-2 py-1 text-xs rounded-md ${statusClass}">${statusText}</span>
+                    </div>
+                    <div>
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Date Received</p>
+                        <p class="text-sm">${new Date(paper.date_received).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Received By</p>
+                        <p class="text-sm">${escapeHtml(paper.received_by)}</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-[#6e6e6e] uppercase mb-1">Total Copies</p>
+                        <p class="text-sm">${paper.available_copies}</p>
+                    </div>
+                </div>
+            `;
+            document.getElementById('viewModal').style.display = 'flex';
+        }
+
+        function closeViewModal() {
+            document.getElementById('viewModal').style.display = 'none';
+        }
+
+        // ========== DELETE MODAL FUNCTIONS ==========
+        let currentDeleteId = null;
+
+        function openDeleteModal(id, name, issueNumber) {
+            currentDeleteId = id;
+            document.getElementById('deleteNewspaperName').textContent = name;
+            document.getElementById('deleteIssueNumber').textContent = 'Issue #: ' + issueNumber;
+
+            // Build the delete URL with current query parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            urlParams.set('delete', id);
+            document.getElementById('confirmDeleteBtn').href = '?' + urlParams.toString();
+
+            document.getElementById('deleteModal').style.display = 'flex';
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').style.display = 'none';
+            currentDeleteId = null;
+        }
+
+        // ========== ESCAPE HTML ==========
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // ========== MODAL CLICK HANDLERS ==========
         window.onclick = function(event) {
             const addModal = document.getElementById('addModal');
             const updateModal = document.getElementById('updateModal');
             const addCategoryModal = document.getElementById('addCategoryModal');
+            const viewModal = document.getElementById('viewModal');
+            const deleteModal = document.getElementById('deleteModal');
 
             if (event.target == addModal) {
                 closeAddModal();
@@ -1039,6 +1216,12 @@ include './sidebar.php';
             if (event.target == addCategoryModal) {
                 closeAddCategoryModal();
             }
+            if (event.target == viewModal) {
+                closeViewModal();
+            }
+            if (event.target == deleteModal) {
+                closeDeleteModal();
+            }
         }
 
         // ========== KEYBOARD SHORTCUTS ==========
@@ -1047,6 +1230,8 @@ include './sidebar.php';
                 closeAddModal();
                 closeUpdateModal();
                 closeAddCategoryModal();
+                closeViewModal();
+                closeDeleteModal();
                 document.getElementById('quickActionMenu').classList.remove('show');
             }
         });
