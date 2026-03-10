@@ -194,81 +194,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_copies_submit']
     exit();
 }
 
-// Handle Distribution
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['distribute_submit'])) {
-    $individual_name = trim($_POST['individual_name']);
-    $department = trim($_POST['department']);
-    $distributed_by = trim($_POST['distributed_by']);
-    $selected_newspapers = $_POST['selected_newspapers'] ?? [];
-    $date_distributed = date('Y-m-d');
-
-    if (!empty($selected_newspapers)) {
-        $conn->begin_transaction();
-
-        try {
-            $success_count = 0;
-            $distributed_details = [];
-
-            foreach ($selected_newspapers as $newspaper_id) {
-                // Get newspaper details
-                $result = $conn->query("SELECT n.*, nc.category_name FROM newspapers n 
-                                        LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
-                                        WHERE n.id = $newspaper_id");
-                $paper = $result->fetch_assoc();
-
-                if ($paper && $paper['available_copies'] > 0) {
-                    // Update newspaper available copies (distribute 1 copy)
-                    $conn->query("UPDATE newspapers SET available_copies = available_copies - 1 WHERE id = $newspaper_id");
-
-                    // Update status
-                    $new_available = $paper['available_copies'] - 1;
-                    if ($new_available == 0) {
-                        $conn->query("UPDATE newspapers SET status = 'distributed' WHERE id = $newspaper_id");
-                    } else {
-                        $conn->query("UPDATE newspapers SET status = 'partial' WHERE id = $newspaper_id");
-                    }
-
-                    // Insert distribution record
-                    $stmt = $conn->prepare("INSERT INTO distribution (newspaper_id, distributed_to, department, copies, date_distributed, distributed_by) VALUES (?, ?, ?, 1, ?, ?)");
-                    $stmt->bind_param("issss", $newspaper_id, $individual_name, $department, $date_distributed, $distributed_by);
-                    $stmt->execute();
-
-                    $success_count++;
-                    $distributed_details[] = $paper['newspaper_name'] . " (" . $paper['category_name'] . ")";
-                }
-            }
-
-            $conn->commit();
-
-            if ($success_count > 0) {
-                setToast('success', "$success_count newspaper(s) distributed to $individual_name");
-
-                // Store last distribution info in session
-                $_SESSION['last_distribution'] = [
-                    'individual' => $individual_name,
-                    'department' => $department,
-                    'count' => $success_count,
-                    'newspapers' => $distributed_details,
-                    'timestamp' => date('Y-m-d H:i:s')
-                ];
-            } else {
-                setToast('error', "No newspapers were available for distribution");
-            }
-        } catch (Exception $e) {
-            $conn->rollback();
-            setToast('error', "Distribution failed: " . $e->getMessage());
-        }
-    } else {
-        setToast('error', "No newspapers selected for distribution");
-    }
-
-    // Preserve filters and pagination
-    $query_params = $_GET;
-    $redirect_url = 'list.php' . (!empty($query_params) ? '?' . http_build_query($query_params) : '');
-    header('Location: ' . $redirect_url);
-    exit();
-}
-
 // ========== GET DATA FOR DISPLAY ==========
 
 // Get all categories
@@ -276,34 +201,6 @@ $categories_query = $conn->query("SELECT * FROM newspaper_categories ORDER BY ca
 $all_categories = [];
 while ($cat = $categories_query->fetch_assoc()) {
     $all_categories[] = $cat;
-}
-
-// Get available newspapers with their categories for available modal
-$available_newspapers = $conn->query("SELECT n.*, nc.category_name, nc.id as category_id 
-                                     FROM newspapers n 
-                                     LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
-                                     WHERE n.available_copies > 0 
-                                     ORDER BY nc.category_name, n.newspaper_name");
-
-// Group newspapers by category for available modal
-$newspapers_by_category = [];
-$category_totals = [];
-
-if ($available_newspapers && $available_newspapers->num_rows > 0) {
-    while ($row = $available_newspapers->fetch_assoc()) {
-        $cat_name = $row['category_name'] ?? 'Uncategorized';
-        $cat_id = $row['category_id'] ?? 0;
-
-        if (!isset($newspapers_by_category[$cat_name])) {
-            $newspapers_by_category[$cat_name] = [
-                'id' => $cat_id,
-                'newspapers' => []
-            ];
-            $category_totals[$cat_name] = 0;
-        }
-        $newspapers_by_category[$cat_name]['newspapers'][] = $row;
-        $category_totals[$cat_name] += $row['available_copies'];
-    }
 }
 
 // Pagination settings for newspapers
@@ -350,56 +247,10 @@ $all_newspapers = $conn->query("SELECT n.*, nc.category_name
                                    CASE WHEN '$sort_by' = 'available_copies' THEN n.available_copies END $sort_order
                                LIMIT $offset, $limit");
 
-// Pagination settings for distribution history
-$dist_page = isset($_GET['dist_page']) ? (int)$_GET['dist_page'] : 1;
-$dist_limit = 10;
-$dist_offset = ($dist_page - 1) * $dist_limit;
-
-// Filter settings for distribution history
-$dist_search = isset($_GET['dist_search']) ? trim($_GET['dist_search']) : '';
-$dist_filter_category = isset($_GET['dist_filter_category']) ? (int)$_GET['dist_filter_category'] : 0;
-$dist_sort_by = isset($_GET['dist_sort_by']) ? $_GET['dist_sort_by'] : 'date_distributed';
-$dist_sort_order = isset($_GET['dist_sort_order']) ? $_GET['dist_sort_order'] : 'DESC';
-
-// Build query for distribution history with filters
-$dist_where_clauses = [];
-if (!empty($dist_search)) {
-    $dist_where_clauses[] = "(n.newspaper_name LIKE '%$dist_search%' OR n.newspaper_number LIKE '%$dist_search%' OR d.distributed_to LIKE '%$dist_search%' OR d.department LIKE '%$dist_search%')";
-}
-if ($dist_filter_category > 0) {
-    $dist_where_clauses[] = "n.category_id = $dist_filter_category";
-}
-$dist_where_sql = !empty($dist_where_clauses) ? "WHERE " . implode(" AND ", $dist_where_clauses) : "";
-
-// Get total count for distribution pagination
-$dist_count_query = "SELECT COUNT(*) as total FROM distribution d 
-                     JOIN newspapers n ON d.newspaper_id = n.id 
-                     LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
-                     $dist_where_sql";
-$dist_count_result = $conn->query($dist_count_query);
-$dist_total_rows = $dist_count_result->fetch_assoc()['total'];
-$dist_total_pages = ceil($dist_total_rows / $dist_limit);
-
-// Get distribution history with filters, sorting and pagination
-$distribution_history = $conn->query("SELECT d.*, n.newspaper_name, n.newspaper_number, nc.category_name 
-                                      FROM distribution d 
-                                      JOIN newspapers n ON d.newspaper_id = n.id 
-                                      LEFT JOIN newspaper_categories nc ON n.category_id = nc.id 
-                                      $dist_where_sql
-                                      ORDER BY 
-                                          CASE WHEN '$dist_sort_by' = 'date_distributed' THEN d.date_distributed END $dist_sort_order,
-                                          CASE WHEN '$dist_sort_by' = 'newspaper_name' THEN n.newspaper_name END $dist_sort_order,
-                                          CASE WHEN '$dist_sort_by' = 'category_name' THEN nc.category_name END $dist_sort_order,
-                                          CASE WHEN '$dist_sort_by' = 'distributed_to' THEN d.distributed_to END $dist_sort_order,
-                                          CASE WHEN '$dist_sort_by' = 'department' THEN d.department END $dist_sort_order
-                                      LIMIT $dist_offset, $dist_limit");
-
 // Get statistics
 $total_available = $conn->query("SELECT SUM(available_copies) as total FROM newspapers")->fetch_assoc()['total'] ?? 0;
 $total_newspapers = $conn->query("SELECT COUNT(*) as count FROM newspapers")->fetch_assoc()['count'] ?? 0;
 $total_categories = $conn->query("SELECT COUNT(*) as count FROM newspaper_categories")->fetch_assoc()['count'] ?? 0;
-$total_distributed_today = $conn->query("SELECT COUNT(*) as count FROM distribution WHERE date_distributed = CURDATE()")->fetch_assoc()['count'] ?? 0;
-$total_distributed_month = $conn->query("SELECT COUNT(*) as count FROM distribution WHERE MONTH(date_distributed) = MONTH(CURDATE())")->fetch_assoc()['count'] ?? 0;
 
 // Get toast message from session
 $toast = null;
@@ -447,62 +298,6 @@ include './sidebar.php';
             border-bottom: 1px solid #e5e5e5;
             font-size: 0.875rem;
             color: #1e1e1e;
-        }
-
-        .newspaper-grid {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #e5e5e5;
-            border-radius: 0.375rem;
-            padding: 0.75rem;
-        }
-
-        .category-group {
-            margin-bottom: 1rem;
-            border: 1px solid #e5e5e5;
-            border-radius: 0.375rem;
-            overflow: hidden;
-        }
-
-        .category-header {
-            font-weight: 500;
-            color: #4a4a4a;
-            padding: 0.75rem;
-            background-color: #f5f5f4;
-            border-bottom: 1px solid #e5e5e5;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .category-header-left {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .newspaper-item {
-            display: flex;
-            align-items: center;
-            padding: 0.5rem 0.5rem 0.5rem 2rem;
-            border-bottom: 1px solid #f0f0f0;
-        }
-
-        .newspaper-item:last-child {
-            border-bottom: none;
-        }
-
-        .newspaper-item:hover {
-            background-color: #fafafa;
-        }
-
-        .available-badge {
-            font-size: 0.7rem;
-            background-color: #e8f5e9;
-            color: #2e7d32;
-            padding: 0.15rem 0.5rem;
-            border-radius: 1rem;
-            margin-left: 0.5rem;
         }
 
         .status-badge {
@@ -734,13 +529,13 @@ include './sidebar.php';
                                 <i class="fa-solid fa-tags"></i>
                                 <span>Add Category</span>
                             </div>
-                            <div class="quick-action-item" onclick="openAvailableModal()">
+                            <div class="quick-action-item" onclick="window.location.href='available.php'">
                                 <i class="fa-regular fa-eye"></i>
                                 <span>View Available</span>
                             </div>
-                            <div class="quick-action-item" onclick="openDistributeModal()">
-                                <i class="fa-solid fa-hand-holding-hand"></i>
-                                <span>Distribute</span>
+                            <div class="quick-action-item" onclick="window.location.href='distribution.php'">
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                                <span>Distribution History</span>
                             </div>
                         </div>
                     </div>
@@ -749,10 +544,11 @@ include './sidebar.php';
 
             <div class="p-8">
                 <!-- Stats Cards -->
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                     <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
                         <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Available Copies</p>
                         <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $total_available; ?></p>
+                        <a href="available.php" class="text-xs text-blue-600 hover:underline mt-2 inline-block">View details →</a>
                     </div>
                     <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
                         <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Total Newspapers</p>
@@ -762,28 +558,7 @@ include './sidebar.php';
                         <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Categories</p>
                         <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $total_categories; ?></p>
                     </div>
-                    <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Distributed Today</p>
-                        <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $total_distributed_today; ?></p>
-                    </div>
-                    <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">This Month</p>
-                        <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $total_distributed_month; ?></p>
-                    </div>
                 </div>
-
-                <!-- Last Distribution Info (if exists) -->
-                <?php if (isset($_SESSION['last_distribution'])): ?>
-                    <div class="mb-6 p-3 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-800">
-                        <i class="fa-regular fa-circle-info mr-2"></i>
-                        Last distribution: <?php echo $_SESSION['last_distribution']['count']; ?> newspaper(s) to
-                        <strong><?php echo htmlspecialchars($_SESSION['last_distribution']['individual']); ?></strong>
-                        <?php if (!empty($_SESSION['last_distribution']['department'])): ?>
-                            (<?php echo htmlspecialchars($_SESSION['last_distribution']['department']); ?>)
-                        <?php endif; ?>
-                        at <?php echo $_SESSION['last_distribution']['timestamp']; ?>
-                    </div>
-                <?php endif; ?>
 
                 <!-- Newspapers Table -->
                 <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden mb-6">
@@ -991,203 +766,8 @@ include './sidebar.php';
                         </div>
                     <?php endif; ?>
                 </div>
-
-                <!-- Distribution History with Filters and Pagination -->
-                <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden">
-                    <div class="px-4 py-3 bg-[#fafafa] border-b border-[#e5e5e5]">
-                        <h3 class="text-sm font-medium text-[#1e1e1e]">Distribution History</h3>
-                    </div>
-
-                    <!-- Distribution Filters -->
-                    <div class="p-4 border-b border-[#e5e5e5]">
-                        <form method="GET" class="flex flex-wrap gap-3 items-center">
-                            <input type="hidden" name="dist_page" value="1">
-                            <!-- Preserve newspaper filters -->
-                            <?php if (!empty($search)): ?>
-                                <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
-                            <?php endif; ?>
-                            <?php if ($filter_category > 0): ?>
-                                <input type="hidden" name="filter_category" value="<?php echo $filter_category; ?>">
-                            <?php endif; ?>
-                            <?php if (!empty($filter_status)): ?>
-                                <input type="hidden" name="filter_status" value="<?php echo $filter_status; ?>">
-                            <?php endif; ?>
-                            <input type="hidden" name="sort_by" value="<?php echo $sort_by; ?>">
-                            <input type="hidden" name="sort_order" value="<?php echo $sort_order; ?>">
-
-                            <div class="flex-1 min-w-[200px]">
-                                <input type="text" name="dist_search"
-                                    placeholder="Search by newspaper, recipient, department..."
-                                    value="<?php echo htmlspecialchars($dist_search); ?>"
-                                    autocomplete="off"
-                                    class="w-full px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                            </div>
-
-                            <select name="dist_filter_category" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                                <option value="0">All Categories</option>
-                                <?php foreach ($all_categories as $cat): ?>
-                                    <option value="<?php echo $cat['id']; ?>" <?php echo $dist_filter_category == $cat['id'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($cat['category_name']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-
-                            <select name="dist_sort_by" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                                <option value="date_distributed" <?php echo $dist_sort_by == 'date_distributed' ? 'selected' : ''; ?>>Sort by Date</option>
-                                <option value="newspaper_name" <?php echo $dist_sort_by == 'newspaper_name' ? 'selected' : ''; ?>>Sort by Newspaper</option>
-                                <option value="category_name" <?php echo $dist_sort_by == 'category_name' ? 'selected' : ''; ?>>Sort by Category</option>
-                                <option value="distributed_to" <?php echo $dist_sort_by == 'distributed_to' ? 'selected' : ''; ?>>Sort by Recipient</option>
-                                <option value="department" <?php echo $dist_sort_by == 'department' ? 'selected' : ''; ?>>Sort by Department</option>
-                            </select>
-
-                            <select name="dist_sort_order" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white">
-                                <option value="DESC" <?php echo $dist_sort_order == 'DESC' ? 'selected' : ''; ?>>Descending</option>
-                                <option value="ASC" <?php echo $dist_sort_order == 'ASC' ? 'selected' : ''; ?>>Ascending</option>
-                            </select>
-
-                            <button type="submit" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4]">
-                                <i class="fa-solid fa-sliders mr-1"></i>Apply
-                            </button>
-                        </form>
-                    </div>
-
-                    <div class="overflow-x-auto">
-                        <table>
-                            <thead>
-                                <tr class="bg-[#fafafa]">
-                                    <th class="text-xs">Date</th>
-                                    <th class="text-xs">Newspaper</th>
-                                    <th class="text-xs">Issue #</th>
-                                    <th class="text-xs">Category</th>
-                                    <th class="text-xs">Distributed To</th>
-                                    <th class="text-xs">Department</th>
-                                    <th class="text-xs">By</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if ($distribution_history && $distribution_history->num_rows > 0): ?>
-                                    <?php while ($dist = $distribution_history->fetch_assoc()): ?>
-                                        <tr class="hover:bg-[#fafafa]">
-                                            <td class="text-sm py-2 px-4"><?php echo date('M j, Y', strtotime($dist['date_distributed'])); ?></td>
-                                            <td class="text-sm font-medium py-2 px-4"><?php echo htmlspecialchars($dist['newspaper_name']); ?></td>
-                                            <td class="text-sm font-mono py-2 px-4 issue-number"><?php echo htmlspecialchars($dist['newspaper_number']); ?></td>
-                                            <td class="text-sm py-2 px-4"><?php echo htmlspecialchars($dist['category_name'] ?? 'N/A'); ?></td>
-                                            <td class="text-sm py-2 px-4"><?php echo htmlspecialchars($dist['distributed_to']); ?></td>
-                                            <td class="text-sm py-2 px-4"><?php echo htmlspecialchars($dist['department'] ?? 'N/A'); ?></td>
-                                            <td class="text-sm py-2 px-4"><?php echo htmlspecialchars($dist['distributed_by'] ?? 'N/A'); ?></td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="7" class="text-sm text-[#6e6e6e] text-center py-8">
-                                            No distribution history yet
-                                        </td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Distribution Pagination -->
-                    <?php if ($dist_total_pages > 1): ?>
-                        <div class="px-4 py-3 bg-[#fafafa] border-t border-[#e5e5e5]">
-                            <div class="flex justify-between items-center">
-                                <div class="text-xs text-[#6e6e6e]">
-                                    Showing <?php echo $dist_offset + 1; ?> to <?php echo min($dist_offset + $dist_limit, $dist_total_rows); ?> of <?php echo $dist_total_rows; ?> entries
-                                </div>
-                                <div class="pagination">
-                                    <?php if ($dist_page > 1): ?>
-                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => 1])); ?>" class="pagination-item">
-                                            <i class="fa-regular fa-chevrons-left"></i>
-                                        </a>
-                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $dist_page - 1])); ?>" class="pagination-item">
-                                            <i class="fa-regular fa-chevron-left"></i>
-                                        </a>
-                                    <?php endif; ?>
-
-                                    <?php
-                                    $dist_start = max(1, $dist_page - 2);
-                                    $dist_end = min($dist_total_pages, $dist_page + 2);
-                                    for ($i = $dist_start; $i <= $dist_end; $i++):
-                                    ?>
-                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $i])); ?>"
-                                            class="pagination-item <?php echo $i == $dist_page ? 'active' : ''; ?>">
-                                            <?php echo $i; ?>
-                                        </a>
-                                    <?php endfor; ?>
-
-                                    <?php if ($dist_page < $dist_total_pages): ?>
-                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $dist_page + 1])); ?>" class="pagination-item">
-                                            <i class="fa-regular fa-chevron-right"></i>
-                                        </a>
-                                        <a href="?<?php echo http_build_query(array_merge($_GET, ['dist_page' => $dist_total_pages])); ?>" class="pagination-item">
-                                            <i class="fa-regular fa-chevrons-right"></i>
-                                        </a>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endif; ?>
-                </div>
             </div>
         </main>
-    </div>
-
-    <!-- Available Newspapers Modal -->
-    <div id="availableModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50">
-        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-3xl p-5 max-h-[80vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-base font-medium text-[#1e1e1e]">Available Newspapers</h3>
-                <button type="button" onclick="closeAvailableModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-
-            <div class="space-y-3">
-                <?php if (!empty($newspapers_by_category)): ?>
-                    <?php foreach ($newspapers_by_category as $category_name => $category_data): ?>
-                        <?php $newspapers = $category_data['newspapers']; ?>
-                        <div class="border border-[#e5e5e5] rounded-md overflow-hidden">
-                            <div class="px-4 py-2 bg-[#fafafa] border-b border-[#e5e5e5] flex justify-between items-center">
-                                <span class="text-sm font-medium"><?php echo htmlspecialchars($category_name); ?></span>
-                                <span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
-                                    <?php echo $category_totals[$category_name]; ?> copies total
-                                </span>
-                            </div>
-                            <div class="p-3">
-                                <?php foreach ($newspapers as $paper): ?>
-                                    <div class="flex justify-between items-center py-2 border-b border-[#f0f0f0] last:border-0">
-                                        <div>
-                                            <span class="text-sm font-medium"><?php echo htmlspecialchars($paper['newspaper_name']); ?></span>
-                                            <span class="text-xs text-[#6e6e6e] ml-2 issue-number"><?php echo htmlspecialchars($paper['newspaper_number']); ?></span>
-                                        </div>
-                                        <div class="flex items-center gap-3">
-                                            <span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
-                                                <?php echo $paper['available_copies']; ?> copies
-                                            </span>
-                                            <span class="text-xs text-[#6e6e6e]">
-                                                Received: <?php echo date('M j, Y', strtotime($paper['date_received'])); ?>
-                                            </span>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <div class="text-center py-8 text-[#6e6e6e]">
-                        No newspapers available at the moment
-                    </div>
-                <?php endif; ?>
-            </div>
-
-            <div class="flex justify-end mt-4">
-                <button type="button" onclick="closeAvailableModal()"
-                    class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                    Close
-                </button>
-            </div>
-        </div>
     </div>
 
     <!-- Add Newspaper Modal -->
@@ -1341,122 +921,6 @@ include './sidebar.php';
         </div>
     </div>
 
-    <!-- Distribute Modal -->
-    <div id="distributeModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50">
-        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-2xl p-5">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-base font-medium text-[#1e1e1e]">Distribute Newspapers</h3>
-                <button type="button" onclick="closeDistributeModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-
-            <form method="POST" action="list.php" id="distributeForm">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Individual's Name</label>
-                        <input type="text" name="individual_name" id="individual_name" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                            placeholder="e.g., John Doe">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Department/Office</label>
-                        <input type="text" name="department" id="department"
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                            placeholder="e.g., HR Department">
-                    </div>
-                </div>
-
-                <div class="mb-4">
-                    <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Distributed By</label>
-                    <input type="text" name="distributed_by" id="distributed_by" required
-                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                        placeholder="Your name">
-                </div>
-
-                <div class="mb-4">
-                    <div class="flex justify-between items-center mb-2">
-                        <label class="text-xs text-[#6e6e6e] uppercase tracking-wide">Select Newspapers</label>
-                        <div class="flex gap-3">
-                            <button type="button" onclick="selectAllCategories()" class="text-xs text-blue-600 hover:underline">Select All</button>
-                            <span class="text-xs text-[#6e6e6e]">|</span>
-                            <button type="button" onclick="deselectAllCategories()" class="text-xs text-blue-600 hover:underline">Deselect All</button>
-                        </div>
-                    </div>
-
-                    <div class="newspaper-grid">
-                        <?php if (!empty($newspapers_by_category)): ?>
-                            <?php foreach ($newspapers_by_category as $category_name => $category_data): ?>
-                                <?php $newspapers = $category_data['newspapers']; ?>
-                                <div class="category-group" data-category="<?php echo htmlspecialchars($category_name); ?>">
-                                    <div class="category-header">
-                                        <div class="category-header-left">
-                                            <input type="checkbox"
-                                                class="category-checkbox category-<?php echo preg_replace('/[^a-zA-Z0-9]/', '_', $category_name); ?>-main"
-                                                onchange="toggleCategory('<?php echo htmlspecialchars($category_name); ?>', this.checked)"
-                                                id="cat_<?php echo preg_replace('/[^a-zA-Z0-9]/', '_', $category_name); ?>">
-                                            <label for="cat_<?php echo preg_replace('/[^a-zA-Z0-9]/', '_', $category_name); ?>" class="font-medium cursor-pointer">
-                                                <?php echo htmlspecialchars($category_name); ?>
-                                            </label>
-                                            <span class="available-badge">
-                                                <?php echo count($newspapers); ?> titles (<?php echo $category_totals[$category_name]; ?> copies)
-                                            </span>
-                                        </div>
-                                        <span class="category-select-all text-xs text-blue-600 hover:underline cursor-pointer" onclick="toggleAllInCategory('<?php echo htmlspecialchars($category_name); ?>')">
-                                            Toggle All
-                                        </span>
-                                    </div>
-                                    <?php foreach ($newspapers as $paper): ?>
-                                        <div class="newspaper-item">
-                                            <input type="checkbox"
-                                                name="selected_newspapers[]"
-                                                value="<?php echo $paper['id']; ?>"
-                                                id="paper_<?php echo $paper['id']; ?>"
-                                                class="mr-3 newspaper-checkbox category-<?php echo preg_replace('/[^a-zA-Z0-9]/', '_', $category_name); ?>"
-                                                data-category="<?php echo htmlspecialchars($category_name); ?>"
-                                                onchange="updateCategoryCheckbox('<?php echo htmlspecialchars($category_name); ?>')">
-                                            <label for="paper_<?php echo $paper['id']; ?>" class="flex-1 text-sm cursor-pointer flex justify-between items-center">
-                                                <span>
-                                                    <span class="font-medium"><?php echo htmlspecialchars($paper['newspaper_name']); ?></span>
-                                                    <span class="text-xs text-[#6e6e6e] ml-2 issue-number"><?php echo htmlspecialchars($paper['newspaper_number']); ?></span>
-                                                </span>
-                                                <span class="text-xs <?php echo $paper['available_copies'] > 0 ? 'text-green-600' : 'text-red-600'; ?>">
-                                                    (<?php echo $paper['available_copies']; ?>)
-                                                </span>
-                                            </label>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <div class="text-center py-8 text-[#6e6e6e]">
-                                No newspapers available for distribution
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-
-                <div class="flex justify-between items-center">
-                    <div class="text-sm text-[#6e6e6e]">
-                        Selected: <span id="selectedCount">0</span> newspaper(s)
-                    </div>
-                    <div class="flex gap-2">
-                        <button type="button" onclick="closeDistributeModal()"
-                            class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            Cancel
-                        </button>
-                        <button type="submit" name="distribute_submit"
-                            class="px-3 py-1.5 text-sm border border-transparent rounded-md bg-black  text-white"
-                            onclick="return validateDistribution()">
-                            Distribute (1 copy each)
-                        </button>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
-
     <script>
         // ========== TOAST NOTIFICATION ==========
         function showToast(type, message) {
@@ -1550,16 +1014,6 @@ include './sidebar.php';
             document.getElementById('updateModal').style.display = 'none';
         }
 
-        // ========== AVAILABLE MODAL FUNCTIONS ==========
-        function openAvailableModal() {
-            document.getElementById('availableModal').style.display = 'flex';
-            document.getElementById('quickActionMenu').classList.remove('show');
-        }
-
-        function closeAvailableModal() {
-            document.getElementById('availableModal').style.display = 'none';
-        }
-
         // ========== CATEGORY MODAL FUNCTIONS ==========
         function openAddCategoryModal() {
             document.getElementById('addCategoryModal').style.display = 'flex';
@@ -1570,152 +1024,10 @@ include './sidebar.php';
             document.getElementById('addCategoryModal').style.display = 'none';
         }
 
-        function openDistributeModal() {
-            document.getElementById('distributeModal').style.display = 'flex';
-            deselectAllCategories();
-            updateCounts();
-            document.getElementById('quickActionMenu').classList.remove('show');
-        }
-
-        function closeDistributeModal() {
-            document.getElementById('distributeModal').style.display = 'none';
-        }
-
-        // ========== CATEGORY CHECKBOX FUNCTIONS ==========
-        function toggleCategory(categoryName, checked) {
-            let className = 'category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_');
-            let checkboxes = document.querySelectorAll('.' + className);
-            checkboxes.forEach(cb => {
-                cb.checked = checked;
-            });
-            updateCounts();
-        }
-
-        function toggleAllInCategory(categoryName) {
-            let className = 'category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_');
-            let checkboxes = document.querySelectorAll('.' + className);
-
-            let allChecked = true;
-            checkboxes.forEach(cb => {
-                if (!cb.checked) allChecked = false;
-            });
-
-            checkboxes.forEach(cb => {
-                cb.checked = !allChecked;
-            });
-
-            let mainCheckbox = document.querySelector('.category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_') + '-main');
-            if (mainCheckbox) {
-                mainCheckbox.checked = !allChecked;
-                mainCheckbox.indeterminate = false;
-            }
-
-            updateCounts();
-        }
-
-        function updateCategoryCheckbox(categoryName) {
-            let className = 'category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_');
-            let checkboxes = document.querySelectorAll('.' + className);
-            let totalCheckboxes = checkboxes.length;
-            let checkedCount = 0;
-
-            checkboxes.forEach(cb => {
-                if (cb.checked) checkedCount++;
-            });
-
-            let mainCheckbox = document.querySelector('.category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_') + '-main');
-            if (mainCheckbox) {
-                if (checkedCount === 0) {
-                    mainCheckbox.checked = false;
-                    mainCheckbox.indeterminate = false;
-                } else if (checkedCount === totalCheckboxes) {
-                    mainCheckbox.checked = true;
-                    mainCheckbox.indeterminate = false;
-                } else {
-                    mainCheckbox.checked = false;
-                    mainCheckbox.indeterminate = true;
-                }
-            }
-
-            updateCounts();
-        }
-
-        function selectAllCategories() {
-            let categoryGroups = document.querySelectorAll('.category-group');
-            categoryGroups.forEach(group => {
-                let categoryName = group.dataset.category;
-                if (categoryName) {
-                    let className = 'category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_');
-                    let checkboxes = document.querySelectorAll('.' + className);
-                    checkboxes.forEach(cb => {
-                        cb.checked = true;
-                    });
-
-                    let mainCheckbox = document.querySelector('.category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_') + '-main');
-                    if (mainCheckbox) {
-                        mainCheckbox.checked = true;
-                        mainCheckbox.indeterminate = false;
-                    }
-                }
-            });
-            updateCounts();
-        }
-
-        function deselectAllCategories() {
-            let categoryGroups = document.querySelectorAll('.category-group');
-            categoryGroups.forEach(group => {
-                let categoryName = group.dataset.category;
-                if (categoryName) {
-                    let className = 'category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_');
-                    let checkboxes = document.querySelectorAll('.' + className);
-                    checkboxes.forEach(cb => {
-                        cb.checked = false;
-                    });
-
-                    let mainCheckbox = document.querySelector('.category-' + categoryName.replace(/[^a-zA-Z0-9]/g, '_') + '-main');
-                    if (mainCheckbox) {
-                        mainCheckbox.checked = false;
-                        mainCheckbox.indeterminate = false;
-                    }
-                }
-            });
-            updateCounts();
-        }
-
-        function updateCounts() {
-            let checkboxes = document.querySelectorAll('.newspaper-checkbox:checked');
-            document.getElementById('selectedCount').textContent = checkboxes.length;
-        }
-
-        function validateDistribution() {
-            let checkboxes = document.querySelectorAll('.newspaper-checkbox:checked');
-            let individualName = document.getElementById('individual_name').value.trim();
-            let distributedBy = document.getElementById('distributed_by').value.trim();
-
-            if (checkboxes.length === 0) {
-                alert('Please select at least one newspaper to distribute');
-                return false;
-            }
-
-            if (individualName === '') {
-                alert('Please enter the individual\'s name');
-                return false;
-            }
-
-            if (distributedBy === '') {
-                alert('Please enter who is distributing');
-                return false;
-            }
-
-            return confirm(`Distribute 1 copy each to ${individualName}?`);
-        }
-
         // ========== MODAL CLICK HANDLERS ==========
         window.onclick = function(event) {
             const addModal = document.getElementById('addModal');
             const updateModal = document.getElementById('updateModal');
-            const distributeModal = document.getElementById('distributeModal');
-            const availableModal = document.getElementById('availableModal');
             const addCategoryModal = document.getElementById('addCategoryModal');
 
             if (event.target == addModal) {
@@ -1723,12 +1035,6 @@ include './sidebar.php';
             }
             if (event.target == updateModal) {
                 closeUpdateModal();
-            }
-            if (event.target == distributeModal) {
-                closeDistributeModal();
-            }
-            if (event.target == availableModal) {
-                closeAvailableModal();
             }
             if (event.target == addCategoryModal) {
                 closeAddCategoryModal();
@@ -1740,8 +1046,6 @@ include './sidebar.php';
             if (e.key === 'Escape') {
                 closeAddModal();
                 closeUpdateModal();
-                closeDistributeModal();
-                closeAvailableModal();
                 closeAddCategoryModal();
                 document.getElementById('quickActionMenu').classList.remove('show');
             }
