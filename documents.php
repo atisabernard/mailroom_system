@@ -271,15 +271,6 @@ if ($types_result) {
     }
 }
 
-// Get recent distributions for activity feed
-$recent_distributions = $conn->query("
-    SELECT dd.*, d.document_name
-    FROM document_distribution dd
-    JOIN documents d ON dd.document_id = d.id
-    ORDER BY dd.date_distributed DESC, dd.id DESC
-    LIMIT 10
-");
-
 // Get toast message from session
 $toast = null;
 if (isset($_SESSION['toast'])) {
@@ -317,17 +308,37 @@ if (isset($_SESSION['toast'])) {
             border-color: #9e9e9e;
         }
 
-        .document-card {
-            transition: all 0.2s ease;
-            border: 1px solid #e5e5e5;
-            background-color: white;
-            border-radius: 0.5rem;
-            overflow: hidden;
+        table {
+            width: 100%;
+            border-collapse: collapse;
         }
 
-        .document-card:hover {
-            border-color: #9e9e9e;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 2px solid #e5e5e5;
+            font-weight: 500;
+            color: #4a4a4a;
+            font-size: 0.75rem;
+            background-color: #fafafa;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background-color: #f0f0f0;
+        }
+
+        td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #e5e5e5;
+            font-size: 0.875rem;
+            color: #1e1e1e;
+            vertical-align: middle;
+        }
+
+        tr:hover {
+            background-color: #fafafa;
         }
 
         .stock-indicator {
@@ -395,6 +406,11 @@ if (isset($_SESSION['toast'])) {
             background-color: #1e1e1e;
             color: white;
             transition: all 0.2s;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+            border-radius: 3px;
+            border: none;
+            cursor: pointer;
         }
 
         .distribute-btn:hover {
@@ -446,10 +462,13 @@ if (isset($_SESSION['toast'])) {
         }
 
         .progress-bar {
+            width: 60px;
             height: 4px;
             background-color: #f0f0f0;
             border-radius: 2px;
             overflow: hidden;
+            display: inline-block;
+            margin-left: 8px;
         }
 
         .progress-fill {
@@ -457,22 +476,60 @@ if (isset($_SESSION['toast'])) {
             transition: width 0.3s ease;
         }
 
-        .activity-item {
-            padding: 0.75rem;
-            border-bottom: 1px solid #f0f0f0;
+        .checkbox-column {
+            width: 40px;
+            text-align: center;
         }
 
-        .activity-item:last-child {
-            border-bottom: none;
+        .serial-column {
+            font-family: monospace;
+            font-size: 0.8rem;
         }
 
-        .activity-item:hover {
-            background-color: #fafafa;
+        .action-btn {
+            color: #9e9e9e;
+            transition: color 0.2s;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.25rem;
         }
 
-        .quick-actions {
-            position: sticky;
-            top: 1rem;
+        .action-btn:hover {
+            color: #1e1e1e;
+        }
+
+        /* Pagination styles */
+        .pagination {
+            display: flex;
+            gap: 0.25rem;
+            margin-top: 1rem;
+        }
+
+        .pagination-item {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #e5e5e5;
+            background-color: white;
+            font-size: 0.875rem;
+            color: #1e1e1e;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-radius: 0.25rem;
+        }
+
+        .pagination-item:hover:not(.disabled):not(.active) {
+            background-color: #f5f5f4;
+        }
+
+        .pagination-item.active {
+            background-color: #1e1e1e;
+            color: white;
+            border-color: #1e1e1e;
+        }
+
+        .pagination-item.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
     </style>
 </head>
@@ -516,7 +573,6 @@ if (isset($_SESSION['toast'])) {
                             <div>
                                 <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Total Documents</p>
                                 <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo number_format($stats['total_documents'] ?? 0); ?></p>
-                                <p class="text-xs text-[#6e6e6e] mt-1">Unique documents</p>
                             </div>
                             <div class="w-10 h-10 bg-[#f5f5f4] rounded-full flex items-center justify-center">
                                 <i class="fa-regular fa-file-lines text-[#6e6e6e] text-lg"></i>
@@ -542,7 +598,6 @@ if (isset($_SESSION['toast'])) {
                             <div>
                                 <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Available Copies</p>
                                 <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo number_format($stats['available_copies'] ?? 0); ?></p>
-                                <p class="text-xs text-[#6e6e6e] mt-1">Ready for distribution</p>
                             </div>
                             <div class="w-10 h-10 bg-[#f5f5f4] rounded-full flex items-center justify-center">
                                 <i class="fa-regular fa-circle-check text-[#6e6e6e] text-lg"></i>
@@ -576,7 +631,7 @@ if (isset($_SESSION['toast'])) {
                     </div>
                 </div>
 
-                <!-- Filters and Search -->
+                <!-- Filters and Bulk Actions -->
                 <div class="bg-white border border-[#e5e5e5] rounded-md p-4 mb-6">
                     <div class="flex flex-wrap items-center gap-3">
                         <span class="text-sm font-medium text-[#1e1e1e]">Filter:</span>
@@ -613,260 +668,190 @@ if (isset($_SESSION['toast'])) {
                         </button>
 
                         <button onclick="toggleBulkMode()" id="bulkModeBtn" class="px-4 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-regular fa-layer-group mr-1 text-[#6e6e6e]"></i>
+                            <i class="fa-solid fa-layer-group mr-1 text-[#6e6e6e]"></i>
                             Bulk Mode
                         </button>
                     </div>
+
+                    <!-- Bulk Actions Bar (hidden by default) -->
+                    <div id="bulkBar" class="mt-4 bg-[#1e1e1e] text-white rounded-md p-3 hidden items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <i class="fa-regular fa-cubes"></i>
+                            <span id="selectedCount">0</span> document(s) selected
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="clearSelection()" class="px-3 py-1 text-sm bg-white text-[#1e1e1e] rounded-md hover:bg-[#f5f5f4]">
+                                Clear
+                            </button>
+                            <button onclick="processBulkDistribution()" class="px-3 py-1 text-sm bg-white text-[#1e1e1e] rounded-md hover:bg-[#f5f5f4]">
+                                <i class="fa-solid fa-share-from-square mr-1"></i>
+                                Distribute Selected
+                            </button>
+                            <button onclick="toggleBulkMode()" class="px-3 py-1 text-sm border border-white text-white rounded-md hover:bg-white hover:text-[#1e1e1e]">
+                                Exit Bulk Mode
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Bulk Actions Bar (hidden by default) -->
-                <div id="bulkBar" class="bg-[#1e1e1e] text-white rounded-md p-3 mb-4 hidden items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <i class="fa-regular fa-cubes"></i>
-                        <span id="selectedCount">0</span> document(s) selected
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="clearSelection()" class="px-3 py-1 text-sm bg-white text-[#1e1e1e] rounded-md hover:bg-[#f5f5f4]">
-                            Clear
-                        </button>
-                        <button onclick="processBulkDistribution()" class="px-3 py-1 text-sm bg-white text-[#1e1e1e] rounded-md hover:bg-[#f5f5f4]">
-                            <i class="fa-regular fa-share-from-square mr-1"></i>
-                            Distribute Selected
-                        </button>
-                        <button onclick="toggleBulkMode()" class="px-3 py-1 text-sm border border-white text-white rounded-md hover:bg-white hover:text-[#1e1e1e]">
-                            Exit Bulk Mode
-                        </button>
-                    </div>
-                </div>
+                <!-- Documents Table -->
+                <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table id="documentsTable">
+                            <thead>
+                                <tr>
+                                    <th class="checkbox-column">
+                                        <input type="checkbox" id="selectAllCheckbox" class="bulk-checkbox-global hidden rounded border-[#e5e5e5] text-[#1e1e1e] focus:ring-[#1e1e1e]" onchange="toggleSelectAll()">
+                                    </th>
+                                    <th onclick="sortTable(1)">Serial # <i class="fa-solid fa-sort ml-1 text-[#9e9e9e]"></i></th>
+                                    <th onclick="sortTable(2)">Document Name <i class="fa-solid fa-sort ml-1 text-[#9e9e9e]"></i></th>
+                                    <th onclick="sortTable(3)">Type <i class="fa-solid fa-sort ml-1 text-[#9e9e9e]"></i></th>
+                                    <th onclick="sortTable(4)">Origin <i class="fa-solid fa-sort ml-1 text-[#9e9e9e]"></i></th>
+                                    <th onclick="sortTable(5)">Available <i class="fa-solid fa-sort ml-1 text-[#9e9e9e]"></i></th>
+                                    <th onclick="sortTable(6)">Total <i class="fa-solid fa-sort ml-1 text-[#9e9e9e]"></i></th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableBody">
+                                <?php if ($documents_result && $documents_result->num_rows > 0): ?>
+                                    <?php
+                                    $counter = 1;
+                                    while ($doc = $documents_result->fetch_assoc()):
+                                        $available = $doc['available_copies'];
+                                        $total = $doc['copies_received'];
+                                        $percentage = $total > 0 ? round(($available / $total) * 100) : 0;
 
-                <!-- Main Grid: Documents and Activity -->
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <!-- Documents Grid (Left Column - 2/3 width) -->
-                    <div class="lg:col-span-2">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="documentsGrid">
-                            <?php if ($documents_result && $documents_result->num_rows > 0): ?>
-                                <?php while ($doc = $documents_result->fetch_assoc()):
-                                    $available = $doc['available_copies'];
-                                    $total = $doc['copies_received'];
-                                    $percentage = $total > 0 ? round(($available / $total) * 100) : 0;
+                                        // Determine stock level class
+                                        if ($available <= 0) {
+                                            $stockClass = 'stock-out';
+                                            $stockText = 'Out of Stock';
+                                            $badgeClass = 'badge-danger';
+                                            $progressClass = 'bg-[#9e9e9e]';
+                                        } elseif ($available <= 5) {
+                                            $stockClass = 'stock-low';
+                                            $stockText = 'Low Stock';
+                                            $badgeClass = 'badge-warning';
+                                            $progressClass = 'bg-[#ef4444]';
+                                        } elseif ($available <= 10) {
+                                            $stockClass = 'stock-medium';
+                                            $stockText = 'Medium Stock';
+                                            $badgeClass = 'badge-warning';
+                                            $progressClass = 'bg-[#f59e0b]';
+                                        } else {
+                                            $stockClass = 'stock-high';
+                                            $stockText = 'High Stock';
+                                            $badgeClass = 'badge-success';
+                                            $progressClass = 'bg-[#10b981]';
+                                        }
+                                    ?>
+                                        <tr class="document-row hover:bg-[#fafafa]"
+                                            data-id="<?php echo $doc['id']; ?>"
+                                            data-type="<?php echo strtolower(htmlspecialchars($doc['document_type'] ?? 'uncategorized')); ?>"
+                                            data-available="<?php echo $available; ?>"
+                                            data-name="<?php echo strtolower(htmlspecialchars($doc['document_name'])); ?>"
+                                            data-serial="<?php echo strtolower(htmlspecialchars($doc['serial_number'] ?? '')); ?>">
 
-                                    // Determine stock level class
-                                    if ($available <= 0) {
-                                        $stockClass = 'stock-out';
-                                        $stockText = 'Out of Stock';
-                                        $badgeClass = 'badge-danger';
-                                        $progressClass = 'bg-[#9e9e9e]';
-                                    } elseif ($available <= 5) {
-                                        $stockClass = 'stock-low';
-                                        $stockText = 'Low Stock';
-                                        $badgeClass = 'badge-warning';
-                                        $progressClass = 'bg-[#ef4444]';
-                                    } elseif ($available <= 10) {
-                                        $stockClass = 'stock-medium';
-                                        $stockText = 'Medium Stock';
-                                        $badgeClass = 'badge-warning';
-                                        $progressClass = 'bg-[#f59e0b]';
-                                    } else {
-                                        $stockClass = 'stock-high';
-                                        $stockText = 'High Stock';
-                                        $badgeClass = 'badge-success';
-                                        $progressClass = 'bg-[#10b981]';
-                                    }
-                                ?>
-                                    <div class="document-card document-item p-4"
-                                        data-id="<?php echo $doc['id']; ?>"
-                                        data-type="<?php echo strtolower(htmlspecialchars($doc['document_type'] ?? 'uncategorized')); ?>"
-                                        data-available="<?php echo $available; ?>"
-                                        data-name="<?php echo strtolower(htmlspecialchars($doc['document_name'])); ?>"
-                                        data-serial="<?php echo strtolower(htmlspecialchars($doc['serial_number'] ?? '')); ?>">
+                                            <td class="checkbox-column">
+                                                <input type="checkbox" class="document-checkbox bulk-checkbox hidden rounded border-[#e5e5e5] text-[#1e1e1e] focus:ring-[#1e1e1e]" value="<?php echo $doc['id']; ?>">
+                                            </td>
 
-                                        <!-- Selection Checkbox for Bulk Mode -->
-                                        <div class="bulk-checkbox hidden mb-2">
-                                            <label class="flex items-center">
-                                                <input type="checkbox" class="document-checkbox rounded border-[#e5e5e5] text-[#1e1e1e] focus:ring-[#1e1e1e]" value="<?php echo $doc['id']; ?>">
-                                                <span class="ml-2 text-xs text-[#6e6e6e]">Select for bulk distribution</span>
-                                            </label>
-                                        </div>
+                                            <td class="serial-column"><?php echo htmlspecialchars($doc['serial_number'] ?? 'DOC-000001'); ?></td>
 
-                                        <div class="flex items-start justify-between">
-                                            <div class="flex-1">
-                                                <div class="flex items-center gap-2 mb-1">
-                                                    <span class="stock-indicator <?php echo $stockClass; ?>"></span>
-                                                    <span class="badge <?php echo $badgeClass; ?>">
-                                                        <?php echo $stockText; ?>
-                                                    </span>
-                                                </div>
-                                                <h3 class="text-base font-medium text-[#1e1e1e] line-clamp-2">
+                                            <td class="font-medium">
+                                                <a href="list.php?search=<?php echo urlencode($doc['document_name']); ?>" class="hover:underline">
                                                     <?php echo htmlspecialchars($doc['document_name']); ?>
-                                                </h3>
-                                                <p class="text-xs text-[#6e6e6e] mt-1">
-                                                    Serial: <span class="font-mono"><?php echo htmlspecialchars($doc['serial_number'] ?? 'DOC-000001'); ?></span>
-                                                </p>
-                                            </div>
-                                            <div class="text-right">
-                                                <p class="text-2xl font-medium <?php echo $available > 0 ? 'text-[#1e1e1e]' : 'text-[#9e9e9e]'; ?>">
-                                                    <?php echo $available; ?>
-                                                </p>
-                                                <p class="text-xs text-[#6e6e6e]">of <?php echo $total; ?></p>
-                                            </div>
-                                        </div>
+                                                </a>
+                                            </td>
 
-                                        <!-- Progress Bar -->
-                                        <div class="mt-3">
-                                            <div class="progress-bar">
-                                                <div class="progress-fill <?php echo $progressClass; ?>" style="width: <?php echo $percentage; ?>%"></div>
-                                            </div>
-                                            <div class="flex justify-between text-xs text-[#6e6e6e] mt-1">
-                                                <span><?php echo $doc['document_type'] ?? 'Uncategorized'; ?></span>
-                                                <span><?php echo $percentage; ?>% available</span>
-                                            </div>
-                                        </div>
+                                            <td>
+                                                <span class="badge badge-info">
+                                                    <?php echo htmlspecialchars($doc['document_type'] ?? 'Uncategorized'); ?>
+                                                </span>
+                                            </td>
 
-                                        <!-- Document Details -->
-                                        <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
-                                            <div>
-                                                <span class="text-[#6e6e6e]">Origin:</span>
-                                                <span class="text-[#1e1e1e] ml-1"><?php echo htmlspecialchars($doc['origin'] ?? 'N/A'); ?></span>
-                                            </div>
-                                            <div>
-                                                <span class="text-[#6e6e6e]">Received:</span>
-                                                <span class="text-[#1e1e1e] ml-1"><?php echo $doc['date_received'] ? date('M j, Y', strtotime($doc['date_received'])) : 'N/A'; ?></span>
-                                            </div>
-                                        </div>
+                                            <td><?php echo htmlspecialchars($doc['origin'] ?? 'N/A'); ?></td>
 
-                                        <!-- Action Buttons -->
-                                        <div class="flex gap-2 mt-3 pt-3 border-t border-[#e5e5e5]">
-                                            <?php if ($available > 0): ?>
-                                                <button onclick="openDistributeModal(<?php echo $doc['id']; ?>, '<?php echo htmlspecialchars(addslashes($doc['document_name'])); ?>', <?php echo $available; ?>)"
-                                                    class="flex-1 distribute-btn px-3 py-1.5 text-sm rounded-md flex items-center justify-center gap-1">
-                                                    <i class="fa-regular fa-share-from-square"></i>
-                                                    Distribute
-                                                </button>
-                                            <?php else: ?>
-                                                <button disabled class="flex-1 px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-[#f5f5f4] text-[#9e9e9e] cursor-not-allowed flex items-center justify-center gap-1">
-                                                    <i class="fa-regular fa-ban"></i>
-                                                    Out of Stock
-                                                </button>
-                                            <?php endif; ?>
+                                            <td class="font-mono font-medium <?php echo $available > 0 ? 'text-[#1e1e1e]' : 'text-[#9e9e9e]'; ?>">
+                                                <?php echo $available; ?>
+                                                <div class="progress-bar align-middle">
+                                                    <div class="progress-fill <?php echo $progressClass; ?>" style="width: <?php echo $percentage; ?>%"></div>
+                                                </div>
+                                            </td>
 
-                                            <a href="list.php?search=<?php echo urlencode($doc['document_name']); ?>"
-                                                class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center justify-center"
-                                                title="View Details">
-                                                <i class="fa-regular fa-eye"></i>
-                                            </a>
-                                        </div>
-                                    </div>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <div class="col-span-2 bg-white border border-[#e5e5e5] rounded-md p-8 text-center">
-                                    <i class="fa-regular fa-folder-open text-4xl text-[#9e9e9e] mb-3"></i>
-                                    <p class="text-sm text-[#6e6e6e]">No documents found.</p>
-                                    <a href="list.php" class="inline-block mt-2 text-sm text-[#1e1e1e] underline">Add your first document</a>
-                                </div>
-                            <?php endif; ?>
-                        </div>
+                                            <td class="font-mono"><?php echo $total; ?></td>
 
-                        <!-- No Results Message -->
-                        <div id="noResultsMessage" class="hidden bg-white border border-[#e5e5e5] rounded-md p-8 text-center">
-                            <i class="fa-regular fa-circle-xmark text-4xl text-[#9e9e9e] mb-3"></i>
-                            <p class="text-sm text-[#6e6e6e]">No documents match your filters.</p>
-                            <button onclick="resetFilters()" class="mt-2 text-sm text-[#1e1e1e] underline">Clear filters</button>
-                        </div>
+                                            <td>
+                                                <div class="flex items-center">
+                                                    <span class="stock-indicator <?php echo $stockClass; ?>"></span>
+                                                    <span class="badge <?php echo $badgeClass; ?>"><?php echo $stockText; ?></span>
+                                                </div>
+                                            </td>
+
+                                            <td>
+                                                <div class="flex items-center gap-2">
+                                                    <?php if ($available > 0): ?>
+                                                        <button onclick="openDistributeModal(<?php echo $doc['id']; ?>, '<?php echo htmlspecialchars(addslashes($doc['document_name'])); ?>', <?php echo $available; ?>)"
+                                                            class="distribute-btn flex items-center gap-1">
+                                                            <i class="fa-regular fa-share-from-square text-xs"></i>
+                                                            Distribute
+                                                        </button>
+                                                    <?php else: ?>
+                                                        <button disabled class="distribute-btn opacity-50 cursor-not-allowed flex items-center gap-1">
+                                                            <i class="fa-regular fa-ban text-xs"></i>
+                                                            Out
+                                                        </button>
+                                                    <?php endif; ?>
+
+                                                    <a href="distribution.php?document_id=<?php echo $doc['id']; ?>" class="action-btn"
+                                                        class="action-btn" title="View Details">
+                                                        <i class="fa-regular fa-eye"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="9" class="text-center py-8 text-sm text-[#6e6e6e]">
+                                            <i class="fa-regular fa-folder-open text-3xl mb-2 block"></i>
+                                            No documents found.
+                                            <a href="distribution.php" class="text-[#1e1e1e] underline">Add your first document</a>
+                                        </td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
                     </div>
 
-                    <!-- Right Sidebar - Quick Actions and Activity -->
-                    <div class="lg:col-span-1">
-                        <div class="quick-actions space-y-4">
-                            <!-- Quick Stats Card -->
-                            <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                                <h3 class="text-sm font-medium text-[#1e1e1e] mb-3">Quick Stats</h3>
-                                <div class="space-y-2">
-                                    <div class="flex justify-between text-sm">
-                                        <span class="text-[#6e6e6e]">Documents in stock:</span>
-                                        <span class="font-medium"><?php echo number_format(($stats['in_stock'] ?? 0) + ($stats['low_stock'] ?? 0)); ?></span>
-                                    </div>
-                                    <div class="flex justify-between text-sm">
-                                        <span class="text-[#6e6e6e]">Out of stock:</span>
-                                        <span class="font-medium"><?php echo number_format($stats['out_of_stock'] ?? 0); ?></span>
-                                    </div>
-                                    <div class="flex justify-between text-sm">
-                                        <span class="text-[#6e6e6e]">Total copies available:</span>
-                                        <span class="font-medium"><?php echo number_format($stats['available_copies'] ?? 0); ?></span>
-                                    </div>
-                                    <div class="flex justify-between text-sm">
-                                        <span class="text-[#6e6e6e]">Total distributed:</span>
-                                        <span class="font-medium"><?php echo number_format($stats['distributed_copies'] ?? 0); ?></span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Quick Actions Card -->
-                            <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                                <h3 class="text-sm font-medium text-[#1e1e1e] mb-3">Quick Actions</h3>
-                                <div class="space-y-2">
-                                    <a href="list.php"
-                                        class="block w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] text-center">
-                                        <i class="fa-regular fa-plus mr-1 text-[#6e6e6e]"></i>
-                                        Add New Document
-                                    </a>
-                                    <a href="distribution.php"
-                                        class="block w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] text-center">
-                                        <i class="fa-regular fa-clock mr-1 text-[#6e6e6e]"></i>
-                                        View Distribution History
-                                    </a>
-                                    <a href="document_types.php?action=create"
-                                        class="block w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] text-center">
-                                        <i class="fa-solid fa-tag mr-1 text-[#6e6e6e]"></i>
-                                        Create Document Type
-                                    </a>
-                                </div>
-                            </div>
-
-                            <!-- Recent Activity Card -->
-                            <div class="bg-white border border-[#e5e5e5] rounded-md">
-                                <div class="px-4 py-3 border-b border-[#e5e5e5] bg-[#fafafa]">
-                                    <h3 class="text-sm font-medium text-[#1e1e1e]">Recent Distributions</h3>
-                                </div>
-                                <div class="divide-y divide-[#e5e5e5] max-h-96 overflow-y-auto">
-                                    <?php if ($recent_distributions && $recent_distributions->num_rows > 0): ?>
-                                        <?php while ($activity = $recent_distributions->fetch_assoc()): ?>
-                                            <div class="activity-item p-3">
-                                                <div class="flex items-start gap-2">
-                                                    <div class="w-6 h-6 bg-[#f5f5f4] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                        <i class="fa-regular fa-share-from-square text-xs text-[#6e6e6e]"></i>
-                                                    </div>
-                                                    <div class="flex-1 min-w-0">
-                                                        <p class="text-sm font-medium text-[#1e1e1e] truncate">
-                                                            <?php echo htmlspecialchars($activity['document_name']); ?>
-                                                        </p>
-                                                        <p class="text-xs text-[#6e6e6e]">
-                                                            <?php echo htmlspecialchars($activity['recipient_name']); ?> •
-                                                            <?php echo $activity['number_distributed']; ?> copies •
-                                                            <?php echo htmlspecialchars($activity['department']); ?>
-                                                        </p>
-                                                        <p class="text-xs text-[#9e9e9e] mt-1">
-                                                            <?php echo date('M j, Y g:i A', strtotime($activity['date_distributed'])); ?>
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        <?php endwhile; ?>
-                                    <?php else: ?>
-                                        <div class="p-4 text-center">
-                                            <p class="text-sm text-[#6e6e6e]">No recent distributions</p>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="px-4 py-2 border-t border-[#e5e5e5] bg-[#fafafa]">
-                                    <a href="distribution.php" class="text-xs text-[#1e1e1e] hover:underline flex items-center justify-center">
-                                        View All
-                                        <i class="fa-solid fa-arrow-right ml-1"></i>
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                    <!-- Table Footer with Record Count -->
+                    <div class="px-5 py-3 border-t border-[#e5e5e5] bg-[#fafafa] text-xs text-[#6e6e6e] flex justify-between items-center">
+                        <span>Showing <span id="visibleCount"><?php echo $documents_result ? $documents_result->num_rows : 0; ?></span> documents</span>
+                        <span>Total Available Copies: <?php echo number_format($stats['available_copies'] ?? 0); ?></span>
                     </div>
                 </div>
+
+                <!-- No Results Message (hidden by default) -->
+                <div id="noResultsMessage" class="hidden bg-white border border-[#e5e5e5] rounded-md p-8 text-center mt-4">
+                    <i class="fa-regular fa-circle-xmark text-4xl text-[#9e9e9e] mb-3"></i>
+                    <p class="text-sm text-[#6e6e6e]">No documents match your filters.</p>
+                    <button onclick="resetFilters()" class="mt-2 text-sm text-[#1e1e1e] underline">Clear filters</button>
+                </div>
+
+                <!-- Simple Pagination (if needed) -->
+                <?php if ($documents_result && $documents_result->num_rows > 20): ?>
+                    <div class="mt-4 flex justify-end">
+                        <div class="pagination">
+                            <button class="pagination-item disabled"><i class="fa-solid fa-chevron-left"></i></button>
+                            <button class="pagination-item active">1</button>
+                            <button class="pagination-item">2</button>
+                            <button class="pagination-item">3</button>
+                            <button class="pagination-item">4</button>
+                            <button class="pagination-item">5</button>
+                            <button class="pagination-item"><i class="fa-solid fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </div>
         </main>
     </div>
@@ -1111,7 +1096,7 @@ if (isset($_SESSION['toast'])) {
         // Bulk Mode Functions
         function toggleBulkMode() {
             bulkMode = !bulkMode;
-            const checkboxes = document.querySelectorAll('.bulk-checkbox');
+            const checkboxes = document.querySelectorAll('.bulk-checkbox, .bulk-checkbox-global');
             const bulkBar = document.getElementById('bulkBar');
             const bulkBtn = document.getElementById('bulkModeBtn');
 
@@ -1125,6 +1110,7 @@ if (isset($_SESSION['toast'])) {
                 bulkBtn.classList.add('active');
                 selectedDocuments.clear();
                 updateSelectedCount();
+                document.getElementById('selectAllCheckbox').checked = false;
             } else {
                 bulkBar.classList.add('hidden');
                 bulkBar.classList.remove('flex');
@@ -1134,6 +1120,20 @@ if (isset($_SESSION['toast'])) {
                     cb.checked = false;
                 });
             }
+        }
+
+        function toggleSelectAll() {
+            const selectAll = document.getElementById('selectAllCheckbox').checked;
+            document.querySelectorAll('.document-checkbox').forEach(cb => {
+                cb.checked = selectAll;
+                const docId = cb.value;
+                if (selectAll) {
+                    selectedDocuments.add(docId);
+                } else {
+                    selectedDocuments.delete(docId);
+                }
+            });
+            updateSelectedCount();
         }
 
         // Update document selection
@@ -1146,6 +1146,11 @@ if (isset($_SESSION['toast'])) {
                     selectedDocuments.delete(docId);
                 }
                 updateSelectedCount();
+
+                // Update select all checkbox
+                const totalCheckboxes = document.querySelectorAll('.document-checkbox').length;
+                const checkedCheckboxes = document.querySelectorAll('.document-checkbox:checked').length;
+                document.getElementById('selectAllCheckbox').checked = totalCheckboxes === checkedCheckboxes;
             }
         });
 
@@ -1158,6 +1163,7 @@ if (isset($_SESSION['toast'])) {
                 cb.checked = false;
             });
             selectedDocuments.clear();
+            document.getElementById('selectAllCheckbox').checked = false;
             updateSelectedCount();
         }
 
@@ -1172,20 +1178,20 @@ if (isset($_SESSION['toast'])) {
             list.innerHTML = '';
 
             selectedDocuments.forEach(docId => {
-                const docCard = document.querySelector(`.document-item[data-id="${docId}"]`);
-                if (docCard) {
-                    const docName = docCard.querySelector('h3').textContent;
-                    const available = docCard.dataset.available;
+                const docRow = document.querySelector(`.document-row[data-id="${docId}"]`);
+                if (docRow) {
+                    const docName = docRow.querySelector('td:nth-child(3)').textContent;
+                    const available = docRow.dataset.available;
 
                     const itemDiv = document.createElement('div');
                     itemDiv.className = 'p-3 border-b border-[#e5e5e5] last:border-b-0';
                     itemDiv.innerHTML = `
-                        <div class="flex items-center justify-between">
+                        <div class="flex items-center justify-between mb-2">
                             <div>
                                 <p class="text-sm font-medium">${docName}</p>
                                 <p class="text-xs text-[#6e6e6e]">Available: ${available} copies</p>
                             </div>
-                            <div class="w-32">
+                            <div class="w-24">
                                 <input type="number" 
                                        class="bulk-copies w-full px-2 py-1 text-sm border border-[#e5e5e5] rounded-md"
                                        data-id="${docId}"
@@ -1195,7 +1201,7 @@ if (isset($_SESSION['toast'])) {
                                        placeholder="Copies">
                             </div>
                         </div>
-                        <div class="mt-2 grid grid-cols-2 gap-2">
+                        <div class="grid grid-cols-2 gap-2">
                             <input type="text" 
                                    class="bulk-department w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded-md"
                                    data-id="${docId}"
@@ -1295,14 +1301,14 @@ if (isset($_SESSION['toast'])) {
             const stockFilter = document.getElementById('stockFilter').value;
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
 
-            const documents = document.querySelectorAll('.document-item');
+            const rows = document.querySelectorAll('.document-row');
             let visibleCount = 0;
 
-            documents.forEach(doc => {
-                const docType = doc.getAttribute('data-type');
-                const available = parseInt(doc.getAttribute('data-available'));
-                const docName = doc.getAttribute('data-name');
-                const docSerial = doc.getAttribute('data-serial');
+            rows.forEach(row => {
+                const docType = row.getAttribute('data-type');
+                const available = parseInt(row.getAttribute('data-available'));
+                const docName = row.getAttribute('data-name');
+                const docSerial = row.getAttribute('data-serial');
 
                 // Type filter
                 let typeMatch = !typeFilter || docType.includes(typeFilter);
@@ -1326,25 +1332,26 @@ if (isset($_SESSION['toast'])) {
                     docType.includes(searchTerm);
 
                 if (typeMatch && stockMatch && searchMatch) {
-                    doc.style.display = '';
+                    row.style.display = '';
                     visibleCount++;
                 } else {
-                    doc.style.display = 'none';
+                    row.style.display = 'none';
                 }
             });
 
             // Show/hide no results message
-            const grid = document.getElementById('documentsGrid');
+            const table = document.getElementById('documentsTable');
             const noResults = document.getElementById('noResultsMessage');
 
             if (visibleCount === 0) {
-                grid.classList.add('hidden');
+                table.classList.add('hidden');
                 noResults.classList.remove('hidden');
             } else {
-                grid.classList.remove('hidden');
+                table.classList.remove('hidden');
                 noResults.classList.add('hidden');
             }
 
+            document.getElementById('visibleCount').textContent = visibleCount;
             showToast(`Showing ${visibleCount} document(s)`, 'info', 2000);
         }
 
@@ -1353,15 +1360,56 @@ if (isset($_SESSION['toast'])) {
             document.getElementById('stockFilter').value = 'all';
             document.getElementById('searchInput').value = '';
 
-            const documents = document.querySelectorAll('.document-item');
-            documents.forEach(doc => {
-                doc.style.display = '';
+            const rows = document.querySelectorAll('.document-row');
+            rows.forEach(row => {
+                row.style.display = '';
             });
 
-            document.getElementById('documentsGrid').classList.remove('hidden');
+            document.getElementById('documentsTable').classList.remove('hidden');
             document.getElementById('noResultsMessage').classList.add('hidden');
+            document.getElementById('visibleCount').textContent = rows.length;
 
             showToast('Filters cleared', 'info', 2000);
+        }
+
+        // Table sorting
+        let sortDirection = 'asc';
+        let lastSortedColumn = -1;
+
+        function sortTable(columnIndex) {
+            const tbody = document.getElementById('tableBody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            // Toggle sort direction if same column
+            if (lastSortedColumn === columnIndex) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortDirection = 'asc';
+                lastSortedColumn = columnIndex;
+            }
+
+            // Sort rows
+            rows.sort((a, b) => {
+                const aCol = a.querySelectorAll('td')[columnIndex]?.textContent.trim() || '';
+                const bCol = b.querySelectorAll('td')[columnIndex]?.textContent.trim() || '';
+
+                // Check if numeric (for Available and Total columns)
+                if (columnIndex === 5 || columnIndex === 6) {
+                    const aNum = parseInt(aCol) || 0;
+                    const bNum = parseInt(bCol) || 0;
+                    return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+                }
+
+                // String comparison
+                const comparison = aCol.localeCompare(bCol);
+                return sortDirection === 'asc' ? comparison : -comparison;
+            });
+
+            // Reorder table
+            tbody.innerHTML = '';
+            rows.forEach(row => tbody.appendChild(row));
+
+            showToast(`Sorted by column`, 'info', 1500);
         }
 
         // Search on enter key
