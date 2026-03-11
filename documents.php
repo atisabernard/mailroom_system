@@ -1,12 +1,268 @@
 <?php
-// documents/list.php
+// available_documents.php
 require_once './config/db.php';
-session_start();
 
-$message = '';
-$error = '';
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-// Get document types for dropdown
+// Start session for toast messages
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Handle AJAX request for quick distribution
+if (isset($_POST['ajax_action']) && $_POST['ajax_action'] == 'quick_distribute') {
+    header('Content-Type: application/json');
+
+    $document_id = (int)$_POST['document_id'];
+    $department = trim($_POST['department']);
+    $recipient = trim($_POST['recipient']);
+    $copies = (int)$_POST['copies'];
+    $date_distributed = date('Y-m-d');
+
+    // Validate inputs
+    if (empty($department)) {
+        echo json_encode(['success' => false, 'message' => 'Department is required']);
+        exit();
+    }
+
+    if (empty($recipient)) {
+        echo json_encode(['success' => false, 'message' => 'Recipient name is required']);
+        exit();
+    }
+
+    if ($copies < 1) {
+        echo json_encode(['success' => false, 'message' => 'Number of copies must be at least 1']);
+        exit();
+    }
+
+    // Check if document exists and has enough copies
+    $check_stmt = $conn->prepare("SELECT id, document_name, copies_received FROM documents WHERE id = ?");
+    $check_stmt->bind_param("i", $document_id);
+    $check_stmt->execute();
+    $check_result = $check_stmt->get_result();
+    $document = $check_result->fetch_assoc();
+    $check_stmt->close();
+
+    if (!$document) {
+        echo json_encode(['success' => false, 'message' => 'Document not found']);
+        exit();
+    }
+
+    if ($document['copies_received'] < $copies) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Insufficient copies available. Only ' . $document['copies_received'] . ' copies left.'
+        ]);
+        exit();
+    }
+
+    // Begin transaction
+    $conn->begin_transaction();
+
+    try {
+        // Insert distribution record
+        $insert_stmt = $conn->prepare("INSERT INTO document_distribution 
+            (document_id, department, recipient_name, number_received, number_distributed, date_distributed) 
+            VALUES (?, ?, ?, ?, ?, ?)");
+
+        // Using same number for both received and distributed
+        $insert_stmt->bind_param("issiis", $document_id, $department, $recipient, $copies, $copies, $date_distributed);
+
+        if (!$insert_stmt->execute()) {
+            throw new Exception($insert_stmt->error);
+        }
+        $insert_stmt->close();
+
+        // Update document copies
+        $new_copies = $document['copies_received'] - $copies;
+        $update_stmt = $conn->prepare("UPDATE documents SET copies_received = ? WHERE id = ?");
+        $update_stmt->bind_param("ii", $new_copies, $document_id);
+
+        if (!$update_stmt->execute()) {
+            throw new Exception($update_stmt->error);
+        }
+        $update_stmt->close();
+
+        // Commit transaction
+        $conn->commit();
+
+        echo json_encode([
+            'success' => true,
+            'message' => $copies . ' copy(ies) of "' . $document['document_name'] . '" distributed to ' . $recipient,
+            'new_copies' => $new_copies
+        ]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+    }
+
+    exit();
+}
+
+// Handle bulk distribution via AJAX
+if (isset($_POST['ajax_action']) && $_POST['ajax_action'] == 'bulk_distribute') {
+    header('Content-Type: application/json');
+
+    $distributions = json_decode($_POST['distributions'], true);
+    $date_distributed = date('Y-m-d');
+
+    if (empty($distributions)) {
+        echo json_encode(['success' => false, 'message' => 'No distribution data provided']);
+        exit();
+    }
+
+    $conn->begin_transaction();
+    $success_count = 0;
+    $errors = [];
+
+    try {
+        foreach ($distributions as $dist) {
+            $document_id = (int)$dist['document_id'];
+            $department = trim($dist['department']);
+            $recipient = trim($dist['recipient']);
+            $copies = (int)$dist['copies'];
+
+            if (empty($department) || empty($recipient) || $copies < 1) {
+                $errors[] = "Invalid data for document ID: $document_id";
+                continue;
+            }
+
+            // Check available copies
+            $check_stmt = $conn->prepare("SELECT copies_received FROM documents WHERE id = ?");
+            $check_stmt->bind_param("i", $document_id);
+            $check_stmt->execute();
+            $check_result = $check_stmt->get_result();
+            $document = $check_result->fetch_assoc();
+            $check_stmt->close();
+
+            if (!$document) {
+                $errors[] = "Document ID $document_id not found";
+                continue;
+            }
+
+            if ($document['copies_received'] < $copies) {
+                $errors[] = "Insufficient copies for document ID $document_id";
+                continue;
+            }
+
+            // Insert distribution
+            $insert_stmt = $conn->prepare("INSERT INTO document_distribution 
+                (document_id, department, recipient_name, number_received, number_distributed, date_distributed) 
+                VALUES (?, ?, ?, ?, ?, ?)");
+            $insert_stmt->bind_param("issiis", $document_id, $department, $recipient, $copies, $copies, $date_distributed);
+
+            if (!$insert_stmt->execute()) {
+                $errors[] = "Failed to insert distribution for document ID $document_id";
+                continue;
+            }
+            $insert_stmt->close();
+
+            // Update document
+            $new_copies = $document['copies_received'] - $copies;
+            $update_stmt = $conn->prepare("UPDATE documents SET copies_received = ? WHERE id = ?");
+            $update_stmt->bind_param("ii", $new_copies, $document_id);
+            $update_stmt->execute();
+            $update_stmt->close();
+
+            $success_count++;
+        }
+
+        if ($success_count > 0) {
+            $conn->commit();
+            echo json_encode([
+                'success' => true,
+                'message' => "$success_count distribution(s) completed successfully",
+                'errors' => $errors
+            ]);
+        } else {
+            $conn->rollback();
+            echo json_encode([
+                'success' => false,
+                'message' => 'No distributions were successful',
+                'errors' => $errors
+            ]);
+        }
+    } catch (Exception $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+    }
+
+    exit();
+}
+
+// Get all documents with their current stock and distribution info
+$sql = "SELECT 
+            d.*, 
+            dt.type_name as document_type,
+            COALESCE((
+                SELECT SUM(number_distributed) 
+                FROM document_distribution 
+                WHERE document_id = d.id
+            ), 0) as total_distributed,
+            (d.copies_received - COALESCE((
+                SELECT SUM(number_distributed) 
+                FROM document_distribution 
+                WHERE document_id = d.id
+            ), 0)) as available_copies
+        FROM documents d
+        LEFT JOIN document_types dt ON d.type_id = dt.id
+        ORDER BY 
+            CASE 
+                WHEN (d.copies_received - COALESCE((
+                    SELECT SUM(number_distributed) 
+                    FROM document_distribution 
+                    WHERE document_id = d.id
+                ), 0)) > 0 THEN 0 
+                ELSE 1 
+            END,
+            d.date_received DESC";
+
+$documents_result = $conn->query($sql);
+
+if (!$documents_result) {
+    $_SESSION['toast'] = ['type' => 'error', 'message' => "Database error: " . $conn->error];
+}
+
+// Calculate statistics
+$stats = [
+    'total_documents' => 0,
+    'total_copies' => 0,
+    'available_copies' => 0,
+    'distributed_copies' => 0,
+    'low_stock' => 0,
+    'out_of_stock' => 0,
+    'in_stock' => 0
+];
+
+$stats_sql = "SELECT 
+                COUNT(DISTINCT d.id) as total_documents,
+                SUM(d.copies_received) as total_copies,
+                SUM(COALESCE(dd.total_distributed, 0)) as distributed_copies,
+                SUM(d.copies_received - COALESCE(dd.total_distributed, 0)) as available_copies,
+                SUM(CASE 
+                    WHEN (d.copies_received - COALESCE(dd.total_distributed, 0)) > 5 
+                    THEN 1 ELSE 0 END) as in_stock,
+                SUM(CASE 
+                    WHEN (d.copies_received - COALESCE(dd.total_distributed, 0)) BETWEEN 1 AND 5 
+                    THEN 1 ELSE 0 END) as low_stock,
+                SUM(CASE 
+                    WHEN (d.copies_received - COALESCE(dd.total_distributed, 0)) <= 0 
+                    THEN 1 ELSE 0 END) as out_of_stock
+              FROM documents d
+              LEFT JOIN (
+                  SELECT document_id, SUM(number_distributed) as total_distributed
+                  FROM document_distribution
+                  GROUP BY document_id
+              ) dd ON d.id = dd.document_id";
+
+$stats_result = $conn->query($stats_sql);
+if ($stats_result) {
+    $stats = $stats_result->fetch_assoc();
+}
+
+// Get document types for filter
 $types_result = $conn->query("SELECT id, type_name FROM document_types ORDER BY type_name");
 $document_types = [];
 if ($types_result) {
@@ -15,218 +271,14 @@ if ($types_result) {
     }
 }
 
-// Function to generate serial number
-function generateSerialNumber($conn)
-{
-    // Get the last serial number
-    $result = $conn->query("SELECT serial_number FROM documents ORDER BY id DESC LIMIT 1");
-    if ($result && $result->num_rows > 0) {
-        $last_serial = $result->fetch_assoc()['serial_number'];
-        // Extract the number part and increment
-        if (preg_match('/DOC-(\d+)/', $last_serial, $matches)) {
-            $num = intval($matches[1]) + 1;
-            return 'DOC-' . str_pad($num, 6, '0', STR_PAD_LEFT);
-        }
-    }
-    // Default starting serial
-    return 'DOC-000001';
-}
-
-// Handle Add Document
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_submit'])) {
-    $document_name = $_POST['document_name'];
-    $type_id = !empty($_POST['type_id']) ? (int)$_POST['type_id'] : null;
-    $origin = $_POST['origin'];
-    $copies_received = (int)$_POST['copies_received'];
-    $date_received = $_POST['date_received'];
-
-    // Generate serial number
-    $serial_number = generateSerialNumber($conn);
-
-    // If type_id is provided, get the type name for backward compatibility
-    $type_name = '';
-    if ($type_id) {
-        $type_query = $conn->prepare("SELECT type_name FROM document_types WHERE id = ?");
-        $type_query->bind_param("i", $type_id);
-        $type_query->execute();
-        $type_result = $type_query->get_result();
-        if ($type_row = $type_result->fetch_assoc()) {
-            $type_name = $type_row['type_name'];
-        }
-        $type_query->close();
-    }
-
-    $stmt = $conn->prepare("INSERT INTO documents (document_name, type, type_id, origin, copies_received, date_received, serial_number) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssissss", $document_name, $type_name, $type_id, $origin, $copies_received, $date_received, $serial_number);
-
-    if ($stmt->execute()) {
-        $_SESSION['toast'] = ['type' => 'success', 'message' => 'Document added successfully! Serial: ' . $serial_number];
-    } else {
-        $_SESSION['toast'] = ['type' => 'error', 'message' => 'Error: ' . $conn->error];
-    }
-    $stmt->close();
-    header('Location: list.php');
-    exit();
-}
-
-// Handle Delete
-if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
-    $stmt = $conn->prepare("DELETE FROM documents WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    if ($stmt->execute()) {
-        $_SESSION['toast'] = ['type' => 'success', 'message' => 'Document deleted successfully!'];
-    } else {
-        $_SESSION['toast'] = ['type' => 'error', 'message' => 'Error: ' . $conn->error];
-    }
-    $stmt->close();
-    header('Location: list.php');
-    exit();
-}
-
-// Handle Update
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_submit'])) {
-    $id = (int)$_POST['document_id'];
-    $document_name = $_POST['document_name'];
-    $type_id = !empty($_POST['type_id']) ? (int)$_POST['type_id'] : null;
-    $origin = $_POST['origin'];
-    $copies_received = (int)$_POST['copies_received'];
-    $date_received = $_POST['date_received'];
-    $serial_number = $_POST['serial_number']; // Keep existing serial number
-
-    // If type_id is provided, get the type name for backward compatibility
-    $type_name = '';
-    if ($type_id) {
-        $type_query = $conn->prepare("SELECT type_name FROM document_types WHERE id = ?");
-        $type_query->bind_param("i", $type_id);
-        $type_query->execute();
-        $type_result = $type_query->get_result();
-        if ($type_row = $type_result->fetch_assoc()) {
-            $type_name = $type_row['type_name'];
-        }
-        $type_query->close();
-    }
-
-    $stmt = $conn->prepare("UPDATE documents SET document_name = ?, type = ?, type_id = ?, origin = ?, copies_received = ?, date_received = ? WHERE id = ?");
-    $stmt->bind_param("ssisssi", $document_name, $type_name, $type_id, $origin, $copies_received, $date_received, $id);
-
-    if ($stmt->execute()) {
-        $_SESSION['toast'] = ['type' => 'success', 'message' => 'Document updated successfully!'];
-    } else {
-        $_SESSION['toast'] = ['type' => 'error', 'message' => 'Error: ' . $conn->error];
-    }
-    $stmt->close();
-    header('Location: list.php');
-    exit();
-}
-
-// Get statistics
-$total_result = $conn->query("SELECT COUNT(*) as count FROM documents");
-$total = $total_result ? $total_result->fetch_assoc()['count'] : 0;
-
-$month_result = $conn->query("SELECT COUNT(*) as count FROM documents WHERE MONTH(date_received) = MONTH(CURDATE()) AND YEAR(date_received) = YEAR(CURDATE())");
-$month = $month_result ? $month_result->fetch_assoc()['count'] : 0;
-
-$today_result = $conn->query("SELECT COUNT(*) as count FROM documents WHERE date_received = CURDATE()");
-$today = $today_result ? $today_result->fetch_assoc()['count'] : 0;
-
-// Get unique types for filter (from document_types table)
-$types_result = $conn->query("SELECT id, type_name FROM document_types ORDER BY type_name");
-$filter_types = [];
-if ($types_result) {
-    while ($row = $types_result->fetch_assoc()) {
-        $filter_types[] = $row;
-    }
-}
-
-// Pagination parameters
-$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-$limit = isset($_GET['limit']) ? intval($_GET['limit']) : 10;
-$offset = ($page - 1) * $limit;
-$search = isset($_GET['search']) ? $_GET['search'] : '';
-$type_filter = isset($_GET['type_filter']) ? $_GET['type_filter'] : '';
-
-// Build query for counting total records
-$count_query = "SELECT COUNT(*) as total FROM documents d LEFT JOIN document_types dt ON d.type_id = dt.id WHERE 1=1";
-$count_params = [];
-$count_types = "";
-
-if (!empty($search)) {
-    $count_query .= " AND (d.document_name LIKE ? OR d.origin LIKE ? OR dt.type_name LIKE ? OR d.serial_number LIKE ?)";
-    $search_param = "%$search%";
-    $count_params[] = $search_param;
-    $count_params[] = $search_param;
-    $count_params[] = $search_param;
-    $count_params[] = $search_param;
-    $count_types .= "ssss";
-}
-
-if (!empty($type_filter) && $type_filter !== 'all') {
-    $count_query .= " AND LOWER(dt.type_name) = LOWER(?)";
-    $count_params[] = $type_filter;
-    $count_types .= "s";
-}
-
-$count_stmt = $conn->prepare($count_query);
-if (!empty($count_params)) {
-    $count_stmt->bind_param($count_types, ...$count_params);
-}
-$count_stmt->execute();
-$total_records = $count_stmt->get_result()->fetch_assoc()['total'];
-$total_pages = ceil($total_records / $limit);
-
-// Get documents with pagination
-$query = "
-    SELECT d.*, dt.type_name as document_type_name 
-    FROM documents d 
-    LEFT JOIN document_types dt ON d.type_id = dt.id 
-    WHERE 1=1
-";
-
-$params = [];
-$types = "";
-
-if (!empty($search)) {
-    $query .= " AND (d.document_name LIKE ? OR d.origin LIKE ? OR dt.type_name LIKE ? OR d.serial_number LIKE ?)";
-    $search_param = "%$search%";
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $types .= "ssss";
-}
-
-if (!empty($type_filter) && $type_filter !== 'all') {
-    $query .= " AND LOWER(dt.type_name) = LOWER(?)";
-    $params[] = $type_filter;
-    $types .= "s";
-}
-
-$query .= " ORDER BY d.date_received DESC, d.id DESC LIMIT ? OFFSET ?";
-$params[] = $limit;
-$params[] = $offset;
-$types .= "ii";
-
-$stmt = $conn->prepare($query);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$documents = $stmt->get_result();
-
-// Get all documents for JavaScript (limited to recent 100 to avoid huge data)
-$docs_for_js = [];
-$docs_result = $conn->query("
-    SELECT d.*, dt.type_name as document_type_name
-    FROM documents d 
-    LEFT JOIN document_types dt ON d.type_id = dt.id 
-    ORDER BY d.date_received DESC LIMIT 100
+// Get recent distributions for activity feed
+$recent_distributions = $conn->query("
+    SELECT dd.*, d.document_name
+    FROM document_distribution dd
+    JOIN documents d ON dd.document_id = d.id
+    ORDER BY dd.date_distributed DESC, dd.id DESC
+    LIMIT 10
 ");
-if ($docs_result) {
-    while ($row = $docs_result->fetch_assoc()) {
-        $docs_for_js[] = $row;
-    }
-}
 
 // Get toast message from session
 $toast = null;
@@ -242,7 +294,7 @@ if (isset($_SESSION['toast'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Documents - Mailroom</title>
+    <title>Available Documents - Mailroom Management System</title>
     <link rel="icon" type="image/png" href="./images/logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -253,70 +305,131 @@ if (isset($_SESSION['toast'])) {
             background-color: #f5f5f4;
         }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th {
-            text-align: left;
-            padding: 0.75rem 1rem;
-            border-bottom: 2px solid #e5e5e5;
-            font-weight: 500;
-            color: #4a4a4a;
-            font-size: 0.75rem;
-            cursor: pointer;
-            user-select: none;
-        }
-
-        th:hover {
-            background-color: #f0f0f0;
-        }
-
-        td {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #e5e5e5;
-            font-size: 0.875rem;
-            color: #1e1e1e;
-        }
-
-        .pagination {
-            display: flex;
-            gap: 0.25rem;
-            margin-top: 1rem;
-        }
-
-        .pagination-item {
-            padding: 0.5rem 0.75rem;
+        .stat-card {
+            transition: all 0.2s ease;
             border: 1px solid #e5e5e5;
             background-color: white;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border-color: #9e9e9e;
+        }
+
+        .document-card {
+            transition: all 0.2s ease;
+            border: 1px solid #e5e5e5;
+            background-color: white;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+
+        .document-card:hover {
+            border-color: #9e9e9e;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .stock-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .stock-high {
+            background-color: #10b981;
+            box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+        }
+
+        .stock-medium {
+            background-color: #f59e0b;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+        }
+
+        .stock-low {
+            background-color: #ef4444;
+            box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+        }
+
+        .stock-out {
+            background-color: #9e9e9e;
+            box-shadow: 0 0 0 2px rgba(158, 158, 158, 0.2);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+            font-weight: 500;
+            border-radius: 3px;
+        }
+
+        .badge-success {
+            background-color: #e8f0e8;
+            color: #2c5e2c;
+        }
+
+        .badge-warning {
+            background-color: #fff3e0;
+            color: #b45b0b;
+        }
+
+        .badge-danger {
+            background-color: #fee9e7;
+            color: #c73b2b;
+        }
+
+        .badge-info {
+            background-color: #e3f2fd;
+            color: #0b5e8a;
+        }
+
+        .badge-default {
+            background-color: #f5f5f4;
+            color: #4a4a4a;
+        }
+
+        .distribute-btn {
+            background-color: #1e1e1e;
+            color: white;
+            transition: all 0.2s;
+        }
+
+        .distribute-btn:hover {
+            background-color: #2d2d2d;
+        }
+
+        .distribute-btn:disabled {
+            background-color: #9e9e9e;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .filter-btn {
+            padding: 0.5rem 1rem;
             font-size: 0.875rem;
+            border: 1px solid #e5e5e5;
+            border-radius: 0.375rem;
+            background-color: white;
             color: #1e1e1e;
             cursor: pointer;
             transition: all 0.2s;
-            border-radius: 0.25rem;
         }
 
-        .pagination-item:hover:not(.disabled):not(.active) {
+        .filter-btn:hover {
             background-color: #f5f5f4;
         }
 
-        .pagination-item.active {
+        .filter-btn.active {
             background-color: #1e1e1e;
             color: white;
             border-color: #1e1e1e;
         }
 
-        .pagination-item.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .items-per-page {
-            padding: 0.5rem;
-            border: 1px solid #e5e5e5;
-            border-radius: 0.375rem;
-            font-size: 0.875rem;
+        .modal {
+            transition: opacity 0.3s ease;
         }
 
         .toastify {
@@ -332,18 +445,34 @@ if (isset($_SESSION['toast'])) {
             z-index: 9999;
         }
 
-        .modal {
-            transition: opacity 0.3s ease;
+        .progress-bar {
+            height: 4px;
+            background-color: #f0f0f0;
+            border-radius: 2px;
+            overflow: hidden;
         }
 
-        .sort-icon {
-            font-size: 0.7rem;
-            margin-left: 0.25rem;
-            opacity: 0.5;
+        .progress-fill {
+            height: 100%;
+            transition: width 0.3s ease;
         }
 
-        th.active-sort .sort-icon {
-            opacity: 1;
+        .activity-item {
+            padding: 0.75rem;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-item:hover {
+            background-color: #fafafa;
+        }
+
+        .quick-actions {
+            position: sticky;
+            top: 1rem;
         }
     </style>
 </head>
@@ -353,433 +482,512 @@ if (isset($_SESSION['toast'])) {
         <!-- Sidebar -->
         <?php include './sidebar.php'; ?>
 
+        <!-- Main Content -->
         <main class="flex-1 ml-60 min-h-screen">
             <!-- Header -->
             <div class="px-8 py-6 border-b border-[#e5e5e5] bg-white">
                 <div class="flex justify-between items-center">
-                    <h1 class="text-2xl font-medium text-[#1e1e1e]">Documents</h1>
+                    <div>
+                        <h1 class="text-2xl font-medium text-[#1e1e1e]">Available Documents</h1>
+                        <p class="text-sm text-[#6e6e6e] mt-1">View and distribute documents with available copies</p>
+                    </div>
                     <div class="flex gap-2">
-                        <button onclick="exportToCSV()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-regular fa-file-excel mr-1 text-[#6e6e6e]"></i>Export
-                        </button>
-                        <button onclick="printTable()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-solid fa-print mr-1 text-[#6e6e6e]"></i>Print
-                        </button>
-                        <a href="./document_type.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-solid fa-tags mr-1 text-[#6e6e6e]"></i>Manage Types
+                        <a href="distribution.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
+                            <i class="fa-regular fa-clock mr-1 text-[#6e6e6e]"></i>
+                            Distribution History
                         </a>
-                        <button onclick="openAddModal()" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-solid fa-plus mr-1 text-[#6e6e6e]"></i>Add Document
-                        </button>
+                        <a href="list.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
+                            <i class="fa-regular fa-folder mr-1 text-[#6e6e6e]"></i>
+                            Manage Documents
+                        </a>
+                        <a href="document_types.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
+                            <i class="fa-solid fa-tags mr-1 text-[#6e6e6e]"></i>
+                            Document Types
+                        </a>
                     </div>
                 </div>
             </div>
 
             <div class="p-8">
-                <!-- Stats -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Total Documents</p>
-                        <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $total; ?></p>
+                <!-- Statistics Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div class="stat-card rounded-md p-4">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Total Documents</p>
+                                <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo number_format($stats['total_documents'] ?? 0); ?></p>
+                                <p class="text-xs text-[#6e6e6e] mt-1">Unique documents</p>
+                            </div>
+                            <div class="w-10 h-10 bg-[#f5f5f4] rounded-full flex items-center justify-center">
+                                <i class="fa-regular fa-file-lines text-[#6e6e6e] text-lg"></i>
+                            </div>
+                        </div>
                     </div>
-                    <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">This Month</p>
-                        <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $month; ?></p>
+
+                    <div class="stat-card rounded-md p-4">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Total Copies</p>
+                                <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo number_format($stats['total_copies'] ?? 0); ?></p>
+                                <p class="text-xs text-[#6e6e6e] mt-1"><?php echo number_format($stats['distributed_copies'] ?? 0); ?> distributed</p>
+                            </div>
+                            <div class="w-10 h-10 bg-[#f5f5f4] rounded-full flex items-center justify-center">
+                                <i class="fa-regular fa-copy text-[#6e6e6e] text-lg"></i>
+                            </div>
+                        </div>
                     </div>
-                    <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Today</p>
-                        <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo $today; ?></p>
+
+                    <div class="stat-card rounded-md p-4">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Available Copies</p>
+                                <p class="text-2xl font-medium text-[#1e1e1e] mt-1"><?php echo number_format($stats['available_copies'] ?? 0); ?></p>
+                                <p class="text-xs text-[#6e6e6e] mt-1">Ready for distribution</p>
+                            </div>
+                            <div class="w-10 h-10 bg-[#f5f5f4] rounded-full flex items-center justify-center">
+                                <i class="fa-regular fa-circle-check text-[#6e6e6e] text-lg"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="stat-card rounded-md p-4">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <p class="text-xs text-[#6e6e6e] uppercase tracking-wide">Stock Status</p>
+                                <div class="flex items-center gap-3 mt-2">
+                                    <div>
+                                        <span class="stock-indicator stock-high"></span>
+                                        <span class="text-xs text-[#1e1e1e]"><?php echo number_format($stats['in_stock'] ?? 0); ?></span>
+                                    </div>
+                                    <div>
+                                        <span class="stock-indicator stock-medium"></span>
+                                        <span class="text-xs text-[#1e1e1e]"><?php echo number_format($stats['low_stock'] ?? 0); ?></span>
+                                    </div>
+                                    <div>
+                                        <span class="stock-indicator stock-out"></span>
+                                        <span class="text-xs text-[#1e1e1e]"><?php echo number_format($stats['out_of_stock'] ?? 0); ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="w-10 h-10 bg-[#f5f5f4] rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-chart-pie text-[#6e6e6e] text-lg"></i>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Search and Filter -->
+                <!-- Filters and Search -->
                 <div class="bg-white border border-[#e5e5e5] rounded-md p-4 mb-6">
-                    <form method="GET" class="flex flex-col md:flex-row gap-3" id="filterForm">
-                        <div class="flex-1">
-                            <input type="text" name="search" id="searchInput"
-                                placeholder="Search by serial, name, origin, or type..."
-                                value="<?php echo htmlspecialchars($search); ?>"
-                                autocomplete="off"
-                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                        </div>
-                        <button type="submit" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-solid fa-magnifying-glass mr-1 text-[#6e6e6e]"></i>Search
-                        </button>
-                        <select name="type_filter" id="typeFilter" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
-                            <option value="all" <?php echo $type_filter == 'all' ? 'selected' : ''; ?>>All Types</option>
-                            <?php foreach ($filter_types as $type): ?>
-                                <option value="<?php echo htmlspecialchars(strtolower($type['type_name'])); ?>"
-                                    <?php echo strtolower($type_filter) == strtolower($type['type_name']) ? 'selected' : ''; ?>>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <span class="text-sm font-medium text-[#1e1e1e]">Filter:</span>
+
+                        <select id="typeFilter" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
+                            <option value="">All Document Types</option>
+                            <?php foreach ($document_types as $type): ?>
+                                <option value="<?php echo htmlspecialchars($type['type_name']); ?>">
                                     <?php echo htmlspecialchars($type['type_name']); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <select name="limit" id="itemsPerPage" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
-                            <option value="5" <?php echo $limit == 5 ? 'selected' : ''; ?>>5 per page</option>
-                            <option value="10" <?php echo $limit == 10 ? 'selected' : ''; ?>>10 per page</option>
-                            <option value="25" <?php echo $limit == 25 ? 'selected' : ''; ?>>25 per page</option>
-                            <option value="50" <?php echo $limit == 50 ? 'selected' : ''; ?>>50 per page</option>
-                            <option value="100" <?php echo $limit == 100 ? 'selected' : ''; ?>>100 per page</option>
+
+                        <select id="stockFilter" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
+                            <option value="all">All Stock Levels</option>
+                            <option value="in-stock">In Stock (>5)</option>
+                            <option value="low-stock">Low Stock (1-5)</option>
+                            <option value="out-of-stock">Out of Stock</option>
+                            <option value="available">Available Only</option>
                         </select>
 
-                        <a href="list.php" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                            <i class="fa-solid fa-rotate-right mr-1 text-[#6e6e6e]"></i>Clear
-                        </a>
-                    </form>
+                        <div class="flex-1 relative">
+                            <input type="text" id="searchInput" placeholder="Search by document name, serial number, or type..."
+                                class="w-full px-3 py-1.5 pl-9 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                            <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
+                        </div>
+
+                        <button onclick="applyFilters()" class="px-4 py-1.5 text-sm bg-[#1e1e1e] text-white rounded-md hover:bg-[#2d2d2d]">
+                            Apply Filters
+                        </button>
+
+                        <button onclick="resetFilters()" class="px-4 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                            Reset
+                        </button>
+
+                        <button onclick="toggleBulkMode()" id="bulkModeBtn" class="px-4 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                            <i class="fa-regular fa-layer-group mr-1 text-[#6e6e6e]"></i>
+                            Bulk Mode
+                        </button>
+                    </div>
                 </div>
 
-                <!-- Documents Table -->
-                <div class="bg-white border border-[#e5e5e5] rounded-md overflow-hidden">
-                    <div class="overflow-x-auto">
-                        <table>
-                            <thead>
-                                <tr class="bg-[#fafafa]">
-                                    <th class="text-xs">S/N</th>
-                                    <th class="text-xs">Serial Number</th>
-                                    <th class="text-xs">Document Name</th>
-                                    <th class="text-xs">Type</th>
-                                    <th class="text-xs">Origin</th>
-                                    <th class="text-xs">Copies</th>
-                                    <th class="text-xs">Date Received</th>
-                                    <th class="text-xs">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tableBody">
-                                <?php if ($documents && $documents->num_rows > 0): ?>
-                                    <?php
-                                    $counter = $offset + 1;
-                                    while ($row = $documents->fetch_assoc()):
-                                    ?>
-                                        <tr class="hover:bg-[#fafafa] document-row"
-                                            data-id="<?php echo $row['id']; ?>"
-                                            data-type="<?php echo htmlspecialchars(strtolower($row['type'] ?? '')); ?>"
-                                            data-type-id="<?php echo $row['type_id'] ?? ''; ?>">
-                                            <td class="text-sm text-[#6e6e6e]"><?php echo $counter++; ?></td>
-                                            <td class="text-sm font-mono text-[#1e1e1e] font-medium"><?php echo htmlspecialchars($row['serial_number'] ?? 'DOC-000001'); ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo htmlspecialchars($row['document_name'] ?? ''); ?></td>
-                                            <td class="text-sm text-[#1e1e1e]">
-                                                <?php if ($row['type_id']): ?>
-                                                    <a href="document_types.php?action=view&id=<?php echo $row['type_id']; ?>"
-                                                        class="hover:underline">
-                                                        <?php echo htmlspecialchars($row['type'] ?? ''); ?>
-                                                    </a>
-                                                <?php else: ?>
-                                                    <?php echo htmlspecialchars($row['type'] ?? '-'); ?>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo htmlspecialchars($row['origin'] ?? ''); ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $row['copies_received'] ?? 0; ?></td>
-                                            <td class="text-sm text-[#1e1e1e]"><?php echo $row['date_received'] ? date('M j, Y', strtotime($row['date_received'])) : ''; ?></td>
-                                            <td class="text-sm">
-                                                <div class="flex gap-2">
-                                                    <button onclick="viewDocument(<?php echo $row['id']; ?>)"
-                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="View">
-                                                        <i class="fa-regular fa-eye"></i>
-                                                    </button>
-                                                    <button onclick="openEditModal(<?php echo $row['id']; ?>)"
-                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="Edit">
-                                                        <i class="fa-regular fa-pen-to-square"></i>
-                                                    </button>
-                                                    <button onclick="confirmDelete(<?php echo $row['id']; ?>, '<?php echo htmlspecialchars($row['document_name']); ?>')"
-                                                        class="text-[#9e9e9e] hover:text-[#1e1e1e]" title="Delete">
-                                                        <i class="fa-regular fa-trash-can"></i>
-                                                    </button>
+                <!-- Bulk Actions Bar (hidden by default) -->
+                <div id="bulkBar" class="bg-[#1e1e1e] text-white rounded-md p-3 mb-4 hidden items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <i class="fa-regular fa-cubes"></i>
+                        <span id="selectedCount">0</span> document(s) selected
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="clearSelection()" class="px-3 py-1 text-sm bg-white text-[#1e1e1e] rounded-md hover:bg-[#f5f5f4]">
+                            Clear
+                        </button>
+                        <button onclick="processBulkDistribution()" class="px-3 py-1 text-sm bg-white text-[#1e1e1e] rounded-md hover:bg-[#f5f5f4]">
+                            <i class="fa-regular fa-share-from-square mr-1"></i>
+                            Distribute Selected
+                        </button>
+                        <button onclick="toggleBulkMode()" class="px-3 py-1 text-sm border border-white text-white rounded-md hover:bg-white hover:text-[#1e1e1e]">
+                            Exit Bulk Mode
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Main Grid: Documents and Activity -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Documents Grid (Left Column - 2/3 width) -->
+                    <div class="lg:col-span-2">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="documentsGrid">
+                            <?php if ($documents_result && $documents_result->num_rows > 0): ?>
+                                <?php while ($doc = $documents_result->fetch_assoc()):
+                                    $available = $doc['available_copies'];
+                                    $total = $doc['copies_received'];
+                                    $percentage = $total > 0 ? round(($available / $total) * 100) : 0;
+
+                                    // Determine stock level class
+                                    if ($available <= 0) {
+                                        $stockClass = 'stock-out';
+                                        $stockText = 'Out of Stock';
+                                        $badgeClass = 'badge-danger';
+                                        $progressClass = 'bg-[#9e9e9e]';
+                                    } elseif ($available <= 5) {
+                                        $stockClass = 'stock-low';
+                                        $stockText = 'Low Stock';
+                                        $badgeClass = 'badge-warning';
+                                        $progressClass = 'bg-[#ef4444]';
+                                    } elseif ($available <= 10) {
+                                        $stockClass = 'stock-medium';
+                                        $stockText = 'Medium Stock';
+                                        $badgeClass = 'badge-warning';
+                                        $progressClass = 'bg-[#f59e0b]';
+                                    } else {
+                                        $stockClass = 'stock-high';
+                                        $stockText = 'High Stock';
+                                        $badgeClass = 'badge-success';
+                                        $progressClass = 'bg-[#10b981]';
+                                    }
+                                ?>
+                                    <div class="document-card document-item p-4"
+                                        data-id="<?php echo $doc['id']; ?>"
+                                        data-type="<?php echo strtolower(htmlspecialchars($doc['document_type'] ?? 'uncategorized')); ?>"
+                                        data-available="<?php echo $available; ?>"
+                                        data-name="<?php echo strtolower(htmlspecialchars($doc['document_name'])); ?>"
+                                        data-serial="<?php echo strtolower(htmlspecialchars($doc['serial_number'] ?? '')); ?>">
+
+                                        <!-- Selection Checkbox for Bulk Mode -->
+                                        <div class="bulk-checkbox hidden mb-2">
+                                            <label class="flex items-center">
+                                                <input type="checkbox" class="document-checkbox rounded border-[#e5e5e5] text-[#1e1e1e] focus:ring-[#1e1e1e]" value="<?php echo $doc['id']; ?>">
+                                                <span class="ml-2 text-xs text-[#6e6e6e]">Select for bulk distribution</span>
+                                            </label>
+                                        </div>
+
+                                        <div class="flex items-start justify-between">
+                                            <div class="flex-1">
+                                                <div class="flex items-center gap-2 mb-1">
+                                                    <span class="stock-indicator <?php echo $stockClass; ?>"></span>
+                                                    <span class="badge <?php echo $badgeClass; ?>">
+                                                        <?php echo $stockText; ?>
+                                                    </span>
                                                 </div>
-                                            </td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="8" class="text-sm text-[#6e6e6e] text-center py-8">
-                                            No documents found. Add one to get started.
-                                        </td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
+                                                <h3 class="text-base font-medium text-[#1e1e1e] line-clamp-2">
+                                                    <?php echo htmlspecialchars($doc['document_name']); ?>
+                                                </h3>
+                                                <p class="text-xs text-[#6e6e6e] mt-1">
+                                                    Serial: <span class="font-mono"><?php echo htmlspecialchars($doc['serial_number'] ?? 'DOC-000001'); ?></span>
+                                                </p>
+                                            </div>
+                                            <div class="text-right">
+                                                <p class="text-2xl font-medium <?php echo $available > 0 ? 'text-[#1e1e1e]' : 'text-[#9e9e9e]'; ?>">
+                                                    <?php echo $available; ?>
+                                                </p>
+                                                <p class="text-xs text-[#6e6e6e]">of <?php echo $total; ?></p>
+                                            </div>
+                                        </div>
+
+                                        <!-- Progress Bar -->
+                                        <div class="mt-3">
+                                            <div class="progress-bar">
+                                                <div class="progress-fill <?php echo $progressClass; ?>" style="width: <?php echo $percentage; ?>%"></div>
+                                            </div>
+                                            <div class="flex justify-between text-xs text-[#6e6e6e] mt-1">
+                                                <span><?php echo $doc['document_type'] ?? 'Uncategorized'; ?></span>
+                                                <span><?php echo $percentage; ?>% available</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Document Details -->
+                                        <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
+                                            <div>
+                                                <span class="text-[#6e6e6e]">Origin:</span>
+                                                <span class="text-[#1e1e1e] ml-1"><?php echo htmlspecialchars($doc['origin'] ?? 'N/A'); ?></span>
+                                            </div>
+                                            <div>
+                                                <span class="text-[#6e6e6e]">Received:</span>
+                                                <span class="text-[#1e1e1e] ml-1"><?php echo $doc['date_received'] ? date('M j, Y', strtotime($doc['date_received'])) : 'N/A'; ?></span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Action Buttons -->
+                                        <div class="flex gap-2 mt-3 pt-3 border-t border-[#e5e5e5]">
+                                            <?php if ($available > 0): ?>
+                                                <button onclick="openDistributeModal(<?php echo $doc['id']; ?>, '<?php echo htmlspecialchars(addslashes($doc['document_name'])); ?>', <?php echo $available; ?>)"
+                                                    class="flex-1 distribute-btn px-3 py-1.5 text-sm rounded-md flex items-center justify-center gap-1">
+                                                    <i class="fa-regular fa-share-from-square"></i>
+                                                    Distribute
+                                                </button>
+                                            <?php else: ?>
+                                                <button disabled class="flex-1 px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-[#f5f5f4] text-[#9e9e9e] cursor-not-allowed flex items-center justify-center gap-1">
+                                                    <i class="fa-regular fa-ban"></i>
+                                                    Out of Stock
+                                                </button>
+                                            <?php endif; ?>
+
+                                            <a href="list.php?search=<?php echo urlencode($doc['document_name']); ?>"
+                                                class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center justify-center"
+                                                title="View Details">
+                                                <i class="fa-regular fa-eye"></i>
+                                            </a>
+                                        </div>
+                                    </div>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <div class="col-span-2 bg-white border border-[#e5e5e5] rounded-md p-8 text-center">
+                                    <i class="fa-regular fa-folder-open text-4xl text-[#9e9e9e] mb-3"></i>
+                                    <p class="text-sm text-[#6e6e6e]">No documents found.</p>
+                                    <a href="list.php" class="inline-block mt-2 text-sm text-[#1e1e1e] underline">Add your first document</a>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- No Results Message -->
+                        <div id="noResultsMessage" class="hidden bg-white border border-[#e5e5e5] rounded-md p-8 text-center">
+                            <i class="fa-regular fa-circle-xmark text-4xl text-[#9e9e9e] mb-3"></i>
+                            <p class="text-sm text-[#6e6e6e]">No documents match your filters.</p>
+                            <button onclick="resetFilters()" class="mt-2 text-sm text-[#1e1e1e] underline">Clear filters</button>
+                        </div>
+                    </div>
+
+                    <!-- Right Sidebar - Quick Actions and Activity -->
+                    <div class="lg:col-span-1">
+                        <div class="quick-actions space-y-4">
+                            <!-- Quick Stats Card -->
+                            <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
+                                <h3 class="text-sm font-medium text-[#1e1e1e] mb-3">Quick Stats</h3>
+                                <div class="space-y-2">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-[#6e6e6e]">Documents in stock:</span>
+                                        <span class="font-medium"><?php echo number_format(($stats['in_stock'] ?? 0) + ($stats['low_stock'] ?? 0)); ?></span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-[#6e6e6e]">Out of stock:</span>
+                                        <span class="font-medium"><?php echo number_format($stats['out_of_stock'] ?? 0); ?></span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-[#6e6e6e]">Total copies available:</span>
+                                        <span class="font-medium"><?php echo number_format($stats['available_copies'] ?? 0); ?></span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-[#6e6e6e]">Total distributed:</span>
+                                        <span class="font-medium"><?php echo number_format($stats['distributed_copies'] ?? 0); ?></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Quick Actions Card -->
+                            <div class="bg-white border border-[#e5e5e5] rounded-md p-4">
+                                <h3 class="text-sm font-medium text-[#1e1e1e] mb-3">Quick Actions</h3>
+                                <div class="space-y-2">
+                                    <a href="list.php"
+                                        class="block w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] text-center">
+                                        <i class="fa-regular fa-plus mr-1 text-[#6e6e6e]"></i>
+                                        Add New Document
+                                    </a>
+                                    <a href="distribution.php"
+                                        class="block w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] text-center">
+                                        <i class="fa-regular fa-clock mr-1 text-[#6e6e6e]"></i>
+                                        View Distribution History
+                                    </a>
+                                    <a href="document_types.php?action=create"
+                                        class="block w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] text-center">
+                                        <i class="fa-solid fa-tag mr-1 text-[#6e6e6e]"></i>
+                                        Create Document Type
+                                    </a>
+                                </div>
+                            </div>
+
+                            <!-- Recent Activity Card -->
+                            <div class="bg-white border border-[#e5e5e5] rounded-md">
+                                <div class="px-4 py-3 border-b border-[#e5e5e5] bg-[#fafafa]">
+                                    <h3 class="text-sm font-medium text-[#1e1e1e]">Recent Distributions</h3>
+                                </div>
+                                <div class="divide-y divide-[#e5e5e5] max-h-96 overflow-y-auto">
+                                    <?php if ($recent_distributions && $recent_distributions->num_rows > 0): ?>
+                                        <?php while ($activity = $recent_distributions->fetch_assoc()): ?>
+                                            <div class="activity-item p-3">
+                                                <div class="flex items-start gap-2">
+                                                    <div class="w-6 h-6 bg-[#f5f5f4] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                                                        <i class="fa-regular fa-share-from-square text-xs text-[#6e6e6e]"></i>
+                                                    </div>
+                                                    <div class="flex-1 min-w-0">
+                                                        <p class="text-sm font-medium text-[#1e1e1e] truncate">
+                                                            <?php echo htmlspecialchars($activity['document_name']); ?>
+                                                        </p>
+                                                        <p class="text-xs text-[#6e6e6e]">
+                                                            <?php echo htmlspecialchars($activity['recipient_name']); ?> •
+                                                            <?php echo $activity['number_distributed']; ?> copies •
+                                                            <?php echo htmlspecialchars($activity['department']); ?>
+                                                        </p>
+                                                        <p class="text-xs text-[#9e9e9e] mt-1">
+                                                            <?php echo date('M j, Y g:i A', strtotime($activity['date_distributed'])); ?>
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        <?php endwhile; ?>
+                                    <?php else: ?>
+                                        <div class="p-4 text-center">
+                                            <p class="text-sm text-[#6e6e6e]">No recent distributions</p>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="px-4 py-2 border-t border-[#e5e5e5] bg-[#fafafa]">
+                                    <a href="distribution.php" class="text-xs text-[#1e1e1e] hover:underline flex items-center justify-center">
+                                        View All
+                                        <i class="fa-solid fa-arrow-right ml-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-
-                <!-- Pagination -->
-                <?php if ($total_pages > 1): ?>
-                    <div class="mt-4 flex flex-wrap items-center justify-between gap-4">
-                        <div class="text-sm text-[#6e6e6e]">
-                            Showing <?php echo ($offset + 1); ?> to <?php echo min($offset + $limit, $total_records); ?> of <?php echo $total_records; ?> records
-                        </div>
-
-                        <div class="pagination">
-                            <!-- First Page -->
-                            <a href="?page=1&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>&type_filter=<?php echo urlencode($type_filter); ?>"
-                                class="pagination-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
-                                <i class="fa-regular fa-chevrons-left"></i>
-                            </a>
-
-                            <!-- Previous Page -->
-                            <a href="?page=<?php echo $page - 1; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>&type_filter=<?php echo urlencode($type_filter); ?>"
-                                class="pagination-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
-                                <i class="fa-regular fa-chevron-left"></i>
-                            </a>
-
-                            <!-- Page Numbers -->
-                            <?php
-                            $startPage = max(1, $page - 2);
-                            $endPage = min($total_pages, $page + 2);
-
-                            if ($startPage > 1) {
-                                echo '<a href="?page=1&limit=' . $limit . '&search=' . urlencode($search) . '&type_filter=' . urlencode($type_filter) . '" class="pagination-item">1</a>';
-                                if ($startPage > 2) {
-                                    echo '<span class="pagination-item disabled">...</span>';
-                                }
-                            }
-
-                            for ($i = $startPage; $i <= $endPage; $i++) {
-                                $activeClass = $i == $page ? 'active' : '';
-                                echo '<a href="?page=' . $i . '&limit=' . $limit . '&search=' . urlencode($search) . '&type_filter=' . urlencode($type_filter) . '" class="pagination-item ' . $activeClass . '">' . $i . '</a>';
-                            }
-
-                            if ($endPage < $total_pages) {
-                                if ($endPage < $total_pages - 1) {
-                                    echo '<span class="pagination-item disabled">...</span>';
-                                }
-                                echo '<a href="?page=' . $total_pages . '&limit=' . $limit . '&search=' . urlencode($search) . '&type_filter=' . urlencode($type_filter) . '" class="pagination-item">' . $total_pages . '</a>';
-                            }
-                            ?>
-
-                            <!-- Next Page -->
-                            <a href="?page=<?php echo $page + 1; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>&type_filter=<?php echo urlencode($type_filter); ?>"
-                                class="pagination-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
-                                <i class="fa-solid fa-chevron-right"></i>
-                            </a>
-
-                            <!-- Last Page -->
-                            <a href="?page=<?php echo $total_pages; ?>&limit=<?php echo $limit; ?>&search=<?php echo urlencode($search); ?>&type_filter=<?php echo urlencode($type_filter); ?>"
-                                class="pagination-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
-                                <i class="fa-solid fa-chevrons-right"></i>
-                            </a>
-                        </div>
-                    </div>
-                <?php endif; ?>
             </div>
         </main>
     </div>
 
-    <!-- Add Modal -->
-    <div id="addModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal" style="display: none;">
+    <!-- Quick Distribute Modal -->
+    <div id="distributeModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal">
         <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-md p-5">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-base font-medium text-[#1e1e1e]">Add Document</h3>
-                <button onclick="closeAddModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                    <i class="fa-solid fa-xmark"></i>
+                <h3 class="text-base font-medium text-[#1e1e1e]">Quick Distribute</h3>
+                <button onclick="closeDistributeModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                    <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
-            <form method="POST">
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Document Name</label>
-                        <input type="text" name="document_name" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                            placeholder="Enter document name">
-                    </div>
 
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Document Type</label>
-                        <select name="type_id" id="add_type_id" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
-                            <option value="">Select type</option>
-                            <?php foreach ($document_types as $type): ?>
-                                <option value="<?php echo $type['id']; ?>">
-                                    <?php echo htmlspecialchars($type['type_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
+            <div class="mb-4 p-3 bg-[#f5f5f4] rounded-md">
+                <p class="text-sm font-medium text-[#1e1e1e]" id="modalDocumentName"></p>
+                <p class="text-xs text-[#6e6e6e] mt-1">Available copies: <span id="modalAvailableCopies" class="font-medium">0</span></p>
+            </div>
 
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Origin</label>
-                        <input type="text" name="origin" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                            placeholder="e.g., Senate, Ministry, Department">
-                    </div>
+            <form id="distributeForm" onsubmit="return false;">
+                <input type="hidden" id="modalDocumentId">
 
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Copies</label>
-                            <input type="number" name="copies_received" min="1" required
-                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                                placeholder="0">
-                        </div>
-                        <div>
-                            <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Date Received</label>
-                            <input type="date" name="date_received" required value="<?php echo date('Y-m-d'); ?>"
-                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                        </div>
-                    </div>
-
-                    <div class="bg-[#fafafa] p-3 rounded-md">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Serial Number</p>
-                        <p class="text-sm font-mono text-[#1e1e1e]">Auto-generated on save</p>
-                    </div>
-
-                    <div class="pt-2">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide mb-2">Quick Actions</p>
-                        <div class="grid grid-cols-2 gap-2">
-                            <a href="./document_types.php?action=create" target="_blank"
-                                class="text-center px-2 py-1 text-xs border border-[#e5e5e5] rounded-md hover:bg-[#f5f5f4]">
-                                + New Type
-                            </a>
-                            <a href="./document_types.php" target="_blank"
-                                class="text-center px-2 py-1 text-xs border border-[#e5e5e5] rounded-md hover:bg-[#f5f5f4]">
-                                Manage Types
-                            </a>
-                        </div>
-                    </div>
+                <div class="mb-4">
+                    <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Department <span class="text-red-400">*</span></label>
+                    <input type="text" id="modalDepartment" required
+                        placeholder="e.g., IT, HR, Finance"
+                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                        autocomplete="off">
                 </div>
 
-                <div class="flex justify-end gap-2 mt-6">
-                    <button type="button" onclick="closeAddModal()"
+                <div class="mb-4">
+                    <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Recipient Name <span class="text-red-400">*</span></label>
+                    <input type="text" id="modalRecipient" required
+                        placeholder="Full name of recipient"
+                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                        autocomplete="off">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Number of Copies <span class="text-red-400">*</span></label>
+                    <div class="flex items-center gap-2">
+                        <input type="number" id="modalCopies" required min="1" value="1"
+                            class="flex-1 px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                        <button type="button" onclick="decrementCopies()" class="px-3 py-2 border border-[#e5e5e5] rounded-md hover:bg-[#f5f5f4]">
+                            <i class="fa-solid fa-minus"></i>
+                        </button>
+                        <button type="button" onclick="incrementCopies()" class="px-3 py-2 border border-[#e5e5e5] rounded-md hover:bg-[#f5f5f4]">
+                            <i class="fa-solid fa-plus"></i>
+                        </button>
+                    </div>
+                    <p class="text-xs text-[#6e6e6e] mt-1">Maximum: <span id="modalMaxCopies">0</span></p>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-4">
+                    <button type="button" onclick="closeDistributeModal()"
                         class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                         Cancel
                     </button>
-                    <button type="submit" name="add_submit"
-                        class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                        <i class="fa-regular fa-floppy-disk mr-1 text-[#6e6e6e]"></i>
-                        Save Document
+                    <button type="button" onclick="submitDistribution()" id="distributeSubmitBtn"
+                        class="px-4 py-2 text-sm bg-[#1e1e1e] text-white rounded-md hover:bg-[#2d2d2d]">
+                        <i class="fa-regular fa-share-from-square mr-1"></i>
+                        Distribute
                     </button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- Edit Modal -->
-    <div id="editModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal" style="display: none;">
-        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-md p-5">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-base font-medium text-[#1e1e1e]">Edit Document</h3>
-                <button onclick="closeEditModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-            <form method="POST" id="editForm">
-                <input type="hidden" name="document_id" id="edit_id">
-                <input type="hidden" name="serial_number" id="edit_serial">
-                <div class="space-y-4">
-                    <div class="bg-[#fafafa] p-3 rounded-md">
-                        <p class="text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Serial Number</p>
-                        <p class="text-sm font-mono text-[#1e1e1e]" id="display_serial"></p>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Document Name</label>
-                        <input type="text" name="document_name" id="edit_name" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Document Type</label>
-                        <select name="type_id" id="edit_type_id" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
-                            <option value="">Select type</option>
-                            <?php foreach ($document_types as $type): ?>
-                                <option value="<?php echo $type['id']; ?>">
-                                    <?php echo htmlspecialchars($type['type_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Origin</label>
-                        <input type="text" name="origin" id="edit_origin" required
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Copies</label>
-                            <input type="number" name="copies_received" id="edit_copies" min="1" required
-                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                        </div>
-                        <div>
-                            <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Date Received</label>
-                            <input type="date" name="date_received" id="edit_date" required
-                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
-                        </div>
-                    </div>
-                </div>
-
-                <div class="flex justify-end gap-2 mt-6">
-                    <button type="button" onclick="closeEditModal()"
-                        class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                        Cancel
-                    </button>
-                    <button type="submit" name="update_submit"
-                        class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                        <i class="fa-regular fa-floppy-disk mr-1 text-[#6e6e6e]"></i>
-                        Update Document
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- View Modal -->
-    <div id="viewModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal" style="display: none;">
+    <!-- Bulk Distribution Modal -->
+    <div id="bulkModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal">
         <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-2xl p-5">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-base font-medium text-[#1e1e1e]">Document Details</h3>
-                <button onclick="closeViewModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
-                    <i class="fa-regular fa-xmark"></i>
+                <h3 class="text-base font-medium text-[#1e1e1e]">Bulk Distribution</h3>
+                <button onclick="closeBulkModal()" class="text-[#9e9e9e] hover:text-[#1e1e1e]">
+                    <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
 
-            <div id="viewContent" class="space-y-4">
-                <!-- Content will be filled by JavaScript -->
+            <p class="text-sm text-[#6e6e6e] mb-4">You are about to distribute <span id="bulkCount">0</span> document(s).</p>
+
+            <div id="bulkDocumentsList" class="max-h-60 overflow-y-auto border border-[#e5e5e5] rounded-md mb-4">
+                <!-- Will be populated by JavaScript -->
             </div>
 
-            <div class="flex justify-end gap-2 mt-4">
-                <button onclick="closeViewModal()" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                    Close
-                </button>
+            <div class="mb-4">
+                <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Common Department (Optional)</label>
+                <input type="text" id="bulkDepartment"
+                    placeholder="If all documents go to the same department"
+                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                <p class="text-xs text-[#6e6e6e] mt-1">Leave blank to enter per-document departments</p>
             </div>
-        </div>
-    </div>
-
-    <!-- Delete Confirmation Modal -->
-    <div id="deleteModal" class="fixed inset-0 bg-[#000000] bg-opacity-20 hidden items-center justify-center z-50 modal" style="display: none;">
-        <div class="bg-white border border-[#e5e5e5] rounded-md w-full max-w-md p-5">
-            <h3 class="text-base font-medium text-[#1e1e1e] mb-2">Confirm Delete</h3>
-            <p class="text-sm text-[#6e6e6e] mb-4">Are you sure you want to delete <span id="deleteDocName" class="font-medium text-[#1e1e1e]"></span>?</p>
-            <p class="text-xs text-[#9e9e9e] mb-6">This action cannot be undone.</p>
 
             <div class="flex justify-end gap-2">
-                <button onclick="closeDeleteModal()" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
+                <button onclick="closeBulkModal()"
+                    class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
                     Cancel
                 </button>
-                <a href="#" id="confirmDeleteBtn" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e]">
-                    Delete
-                </a>
+                <button onclick="processBulkDistributionSubmit()" id="bulkSubmitBtn"
+                    class="px-4 py-2 text-sm bg-[#1e1e1e] text-white rounded-md hover:bg-[#2d2d2d]">
+                    <i class="fa-regular fa-share-from-square mr-1"></i>
+                    Process Bulk Distribution
+                </button>
             </div>
         </div>
     </div>
 
-    <!-- Toast Container -->
+    <!-- Toast Container (for custom toasts) -->
     <div id="toastContainer"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
     <script>
-        // Store document data for editing
-        const documents = <?php echo json_encode($docs_for_js); ?>;
-        let currentDeleteId = null;
+        // Store document data
+        let documents = [];
+        let selectedDocuments = new Set();
+        let bulkMode = false;
 
-        // Toast notification
-        <?php if ($toast): ?>
-            document.addEventListener('DOMContentLoaded', function() {
-                showToast('<?php echo $toast['message']; ?>', '<?php echo $toast['type']; ?>');
-            });
-        <?php endif; ?>
-
+        // Toast notification function
         function showToast(message, type = 'success') {
-            const backgroundColor = type === 'success' ? '#10b981' : '#ef4444';
+            const backgroundColor = type === 'success' ? '#10b981' :
+                type === 'error' ? '#ef4444' :
+                type === 'warning' ? '#f59e0b' : '#3b82f6';
 
             Toastify({
                 text: message,
@@ -793,226 +1001,394 @@ if (isset($_SESSION['toast'])) {
             }).showToast();
         }
 
-        // Modal functions
-        function openAddModal() {
-            document.getElementById('addModal').style.display = 'flex';
-        }
-
-        function closeAddModal() {
-            document.getElementById('addModal').style.display = 'none';
-        }
-
-        function openEditModal(id) {
-            const doc = documents.find(d => d.id == id);
-            if (doc) {
-                document.getElementById('edit_id').value = doc.id;
-                document.getElementById('edit_serial').value = doc.serial_number || '';
-                document.getElementById('display_serial').textContent = doc.serial_number || 'DOC-000001';
-                document.getElementById('edit_name').value = doc.document_name || '';
-                document.getElementById('edit_type_id').value = doc.type_id || '';
-                document.getElementById('edit_origin').value = doc.origin || '';
-                document.getElementById('edit_copies').value = doc.copies_received || 1;
-                document.getElementById('edit_date').value = doc.date_received || '';
-                document.getElementById('editModal').style.display = 'flex';
-            }
-        }
-
-        function closeEditModal() {
-            document.getElementById('editModal').style.display = 'none';
-        }
-
-        function viewDocument(id) {
-            const doc = documents.find(d => d.id == id);
-            if (doc) {
-                const content = document.getElementById('viewContent');
-                content.innerHTML = `
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">ID</p>
-                            <p class="text-sm">${doc.id}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">Serial Number</p>
-                            <p class="text-sm font-mono font-medium">${doc.serial_number || 'DOC-000001'}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">Document Name</p>
-                            <p class="text-sm font-medium">${escapeHtml(doc.document_name || '')}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">Type</p>
-                            <p class="text-sm">${escapeHtml(doc.type || '-')}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">Origin</p>
-                            <p class="text-sm">${escapeHtml(doc.origin || '')}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">Copies Received</p>
-                            <p class="text-sm">${doc.copies_received || 0}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-[#6e6e6e] uppercase">Date Received</p>
-                            <p class="text-sm">${doc.date_received ? new Date(doc.date_received).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '-'}</p>
-                        </div>
-                        <div class="col-span-2">
-                            <p class="text-xs text-[#6e6e6e] uppercase">Created At</p>
-                            <p class="text-sm">${doc.created_at ? new Date(doc.created_at).toLocaleString() : '-'}</p>
-                        </div>
-                    </div>
-                `;
-                document.getElementById('viewModal').style.display = 'flex';
-            }
-        }
-
-        function closeViewModal() {
-            document.getElementById('viewModal').style.display = 'none';
-        }
-
-        function confirmDelete(id, name) {
-            currentDeleteId = id;
-            document.getElementById('deleteDocName').textContent = name;
-            document.getElementById('confirmDeleteBtn').href = '?delete=' + id;
-            document.getElementById('deleteModal').style.display = 'flex';
-        }
-
-        function closeDeleteModal() {
-            document.getElementById('deleteModal').style.display = 'none';
-            currentDeleteId = null;
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Export to CSV
-        function exportToCSV() {
-            const rows = [];
-            const headers = ['ID', 'Serial Number', 'Document Name', 'Type', 'Origin', 'Copies', 'Date Received'];
-            rows.push(headers.join(','));
-
-            <?php
-            $export_result = $conn->query("
-                SELECT d.*, dt.type_name as document_type_name 
-                FROM documents d 
-                LEFT JOIN document_types dt ON d.type_id = dt.id 
-                ORDER BY d.date_received DESC
-            ");
-            if ($export_result) {
-                while ($row = $export_result->fetch_assoc()) {
-                    echo "rows.push(['" . $row['id'] . "', " .
-                        '"' . addslashes($row['serial_number'] ?? 'DOC-000001') . '", ' .
-                        '"' . addslashes($row['document_name']) . '", ' .
-                        '"' . addslashes($row['type'] ?? '') . '", ' .
-                        '"' . addslashes($row['origin'] ?? '') . '", ' .
-                        "'" . $row['copies_received'] . "', " .
-                        '"' . $row['date_received'] . '"' . "].join(','));";
-                }
-            }
-            ?>
-
-            const csv = rows.join('\n');
-            const blob = new Blob([csv], {
-                type: 'text/csv'
+        // Show toast from PHP session
+        <?php if ($toast): ?>
+            document.addEventListener('DOMContentLoaded', function() {
+                showToast('<?php echo addslashes($toast['message']); ?>', '<?php echo $toast['type']; ?>');
             });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `documents_${new Date().toISOString().split('T')[0]}.csv`;
-            a.click();
+        <?php endif; ?>
 
-            showToast('Export completed successfully!', 'success');
+        // Distribute Modal Functions
+        function openDistributeModal(id, name, available) {
+            document.getElementById('modalDocumentId').value = id;
+            document.getElementById('modalDocumentName').textContent = name;
+            document.getElementById('modalAvailableCopies').textContent = available;
+            document.getElementById('modalMaxCopies').textContent = available;
+            document.getElementById('modalCopies').max = available;
+            document.getElementById('modalCopies').value = 1;
+            document.getElementById('modalDepartment').value = '';
+            document.getElementById('modalRecipient').value = '';
+
+            document.getElementById('distributeModal').style.display = 'flex';
         }
 
-        // Print table
-        function printTable() {
-            const printWindow = window.open('', '_blank');
-            printWindow.document.write(`
-                <html>
-                <head>
-                    <title>Documents List</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; padding: 20px; }
-                        h1 { font-size: 24px; margin-bottom: 20px; }
-                        table { border-collapse: collapse; width: 100%; }
-                        th { background-color: #f2f2f2; text-align: left; padding: 12px; font-size: 12px; }
-                        td { padding: 10px; border-bottom: 1px solid #ddd; font-size: 14px; }
-                        .header { display: flex; justify-content: space-between; margin-bottom: 20px; }
-                        .date { color: #666; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">
-                        <h1>Documents List</h1>
-                        <div class="date">Generated: ${new Date().toLocaleString()}</div>
-                    </div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Serial Number</th>
-                                <th>Document Name</th>
-                                <th>Type</th>
-                                <th>Origin</th>
-                                <th>Copies</th>
-                                <th>Date Received</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php
-                            $print_result = $conn->query("
-                                SELECT d.*, dt.type_name as document_type_name 
-                                FROM documents d 
-                                LEFT JOIN document_types dt ON d.type_id = dt.id 
-                                ORDER BY d.date_received DESC
-                            ");
-                            if ($print_result) {
-                                while ($row = $print_result->fetch_assoc()) {
-                                    echo "<tr>";
-                                    echo "<td>" . $row['id'] . "</td>";
-                                    echo "<td>" . ($row['serial_number'] ?? 'DOC-000001') . "</td>";
-                                    echo "<td>" . htmlspecialchars($row['document_name'] ?? '') . "</td>";
-                                    echo "<td>" . htmlspecialchars($row['type'] ?? '-') . "</td>";
-                                    echo "<td>" . htmlspecialchars($row['origin'] ?? '') . "</td>";
-                                    echo "<td>" . $row['copies_received'] . "</td>";
-                                    echo "<td>" . $row['date_received'] . "</td>";
-                                    echo "</tr>";
-                                }
-                            }
-                            ?>
-                        </tbody>
-                    </table>
-                </body>
-                </html>
-            `);
-            printWindow.document.close();
-            printWindow.print();
-
-            showToast('Print dialog opened', 'success');
+        function closeDistributeModal() {
+            document.getElementById('distributeModal').style.display = 'none';
         }
+
+        function incrementCopies() {
+            const input = document.getElementById('modalCopies');
+            const max = parseInt(document.getElementById('modalMaxCopies').textContent);
+            let value = parseInt(input.value) || 0;
+            if (value < max) {
+                input.value = value + 1;
+            }
+        }
+
+        function decrementCopies() {
+            const input = document.getElementById('modalCopies');
+            let value = parseInt(input.value) || 0;
+            if (value > 1) {
+                input.value = value - 1;
+            }
+        }
+
+        function submitDistribution() {
+            const documentId = document.getElementById('modalDocumentId').value;
+            const department = document.getElementById('modalDepartment').value.trim();
+            const recipient = document.getElementById('modalRecipient').value.trim();
+            const copies = parseInt(document.getElementById('modalCopies').value);
+            const maxCopies = parseInt(document.getElementById('modalMaxCopies').textContent);
+
+            // Validation
+            if (!department) {
+                showToast('Please enter a department', 'warning');
+                return;
+            }
+
+            if (!recipient) {
+                showToast('Please enter a recipient name', 'warning');
+                return;
+            }
+
+            if (!copies || copies < 1) {
+                showToast('Please enter a valid number of copies', 'warning');
+                return;
+            }
+
+            if (copies > maxCopies) {
+                showToast(`Cannot distribute more than ${maxCopies} copies`, 'warning');
+                return;
+            }
+
+            // Show loading state
+            const submitBtn = document.getElementById('distributeSubmitBtn');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '<i class="fa-regular fa-spinner fa-spin mr-1"></i> Processing...';
+            submitBtn.disabled = true;
+
+            // Submit via AJAX
+            fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `ajax_action=quick_distribute&document_id=${documentId}&department=${encodeURIComponent(department)}&recipient=${encodeURIComponent(recipient)}&copies=${copies}`
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast(data.message, 'success');
+                        closeDistributeModal();
+
+                        // Reload the page after a short delay to show updated data
+                        setTimeout(() => {
+                            location.reload();
+                        }, 1500);
+                    } else {
+                        showToast(data.message, 'error');
+                        submitBtn.innerHTML = originalText;
+                        submitBtn.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    showToast('An error occurred. Please try again.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                });
+        }
+
+        // Bulk Mode Functions
+        function toggleBulkMode() {
+            bulkMode = !bulkMode;
+            const checkboxes = document.querySelectorAll('.bulk-checkbox');
+            const bulkBar = document.getElementById('bulkBar');
+            const bulkBtn = document.getElementById('bulkModeBtn');
+
+            checkboxes.forEach(cb => {
+                cb.classList.toggle('hidden', !bulkMode);
+            });
+
+            if (bulkMode) {
+                bulkBar.classList.remove('hidden');
+                bulkBar.classList.add('flex');
+                bulkBtn.classList.add('active');
+                selectedDocuments.clear();
+                updateSelectedCount();
+            } else {
+                bulkBar.classList.add('hidden');
+                bulkBar.classList.remove('flex');
+                bulkBtn.classList.remove('active');
+                // Uncheck all checkboxes
+                document.querySelectorAll('.document-checkbox').forEach(cb => {
+                    cb.checked = false;
+                });
+            }
+        }
+
+        // Update document selection
+        document.addEventListener('change', function(e) {
+            if (e.target.classList.contains('document-checkbox')) {
+                const docId = e.target.value;
+                if (e.target.checked) {
+                    selectedDocuments.add(docId);
+                } else {
+                    selectedDocuments.delete(docId);
+                }
+                updateSelectedCount();
+            }
+        });
+
+        function updateSelectedCount() {
+            document.getElementById('selectedCount').textContent = selectedDocuments.size;
+        }
+
+        function clearSelection() {
+            document.querySelectorAll('.document-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+            selectedDocuments.clear();
+            updateSelectedCount();
+        }
+
+        function processBulkDistribution() {
+            if (selectedDocuments.size === 0) {
+                showToast('Please select at least one document', 'warning');
+                return;
+            }
+
+            // Populate bulk modal with selected documents
+            const list = document.getElementById('bulkDocumentsList');
+            list.innerHTML = '';
+
+            selectedDocuments.forEach(docId => {
+                const docCard = document.querySelector(`.document-item[data-id="${docId}"]`);
+                if (docCard) {
+                    const docName = docCard.querySelector('h3').textContent;
+                    const available = docCard.dataset.available;
+
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'p-3 border-b border-[#e5e5e5] last:border-b-0';
+                    itemDiv.innerHTML = `
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-sm font-medium">${docName}</p>
+                                <p class="text-xs text-[#6e6e6e]">Available: ${available} copies</p>
+                            </div>
+                            <div class="w-32">
+                                <input type="number" 
+                                       class="bulk-copies w-full px-2 py-1 text-sm border border-[#e5e5e5] rounded-md"
+                                       data-id="${docId}"
+                                       min="1"
+                                       max="${available}"
+                                       value="1"
+                                       placeholder="Copies">
+                            </div>
+                        </div>
+                        <div class="mt-2 grid grid-cols-2 gap-2">
+                            <input type="text" 
+                                   class="bulk-department w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded-md"
+                                   data-id="${docId}"
+                                   placeholder="Department">
+                            <input type="text" 
+                                   class="bulk-recipient w-full px-2 py-1 text-xs border border-[#e5e5e5] rounded-md"
+                                   data-id="${docId}"
+                                   placeholder="Recipient">
+                        </div>
+                    `;
+                    list.appendChild(itemDiv);
+                }
+            });
+
+            document.getElementById('bulkCount').textContent = selectedDocuments.size;
+            document.getElementById('bulkModal').style.display = 'flex';
+        }
+
+        function closeBulkModal() {
+            document.getElementById('bulkModal').style.display = 'none';
+        }
+
+        function processBulkDistributionSubmit() {
+            const commonDepartment = document.getElementById('bulkDepartment').value.trim();
+            const distributions = [];
+
+            selectedDocuments.forEach(docId => {
+                const copiesInput = document.querySelector(`.bulk-copies[data-id="${docId}"]`);
+                const deptInput = document.querySelector(`.bulk-department[data-id="${docId}"]`);
+                const recipientInput = document.querySelector(`.bulk-recipient[data-id="${docId}"]`);
+
+                const department = commonDepartment || deptInput.value.trim();
+                const recipient = recipientInput.value.trim();
+                const copies = parseInt(copiesInput.value);
+
+                if (department && recipient && copies > 0) {
+                    distributions.push({
+                        document_id: docId,
+                        department: department,
+                        recipient: recipient,
+                        copies: copies
+                    });
+                }
+            });
+
+            if (distributions.length === 0) {
+                showToast('Please fill in at least one valid distribution', 'warning');
+                return;
+            }
+
+            // Show loading state
+            const submitBtn = document.getElementById('bulkSubmitBtn');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '<i class="fa-regular fa-spinner fa-spin mr-1"></i> Processing...';
+            submitBtn.disabled = true;
+
+            // Submit via AJAX
+            fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'ajax_action=bulk_distribute&distributions=' + encodeURIComponent(JSON.stringify(distributions))
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast(data.message, 'success');
+                        closeBulkModal();
+                        toggleBulkMode(); // Exit bulk mode
+
+                        // Show any errors that occurred
+                        if (data.errors && data.errors.length > 0) {
+                            console.log('Partial errors:', data.errors);
+                        }
+
+                        // Reload the page after a short delay
+                        setTimeout(() => {
+                            location.reload();
+                        }, 1500);
+                    } else {
+                        showToast(data.message, 'error');
+                        submitBtn.innerHTML = originalText;
+                        submitBtn.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    showToast('An error occurred. Please try again.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                });
+        }
+
+        // Filter Functions
+        function applyFilters() {
+            const typeFilter = document.getElementById('typeFilter').value.toLowerCase();
+            const stockFilter = document.getElementById('stockFilter').value;
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+
+            const documents = document.querySelectorAll('.document-item');
+            let visibleCount = 0;
+
+            documents.forEach(doc => {
+                const docType = doc.getAttribute('data-type');
+                const available = parseInt(doc.getAttribute('data-available'));
+                const docName = doc.getAttribute('data-name');
+                const docSerial = doc.getAttribute('data-serial');
+
+                // Type filter
+                let typeMatch = !typeFilter || docType.includes(typeFilter);
+
+                // Stock filter
+                let stockMatch = true;
+                if (stockFilter === 'in-stock') {
+                    stockMatch = available > 5;
+                } else if (stockFilter === 'low-stock') {
+                    stockMatch = available > 0 && available <= 5;
+                } else if (stockFilter === 'out-of-stock') {
+                    stockMatch = available <= 0;
+                } else if (stockFilter === 'available') {
+                    stockMatch = available > 0;
+                }
+
+                // Search filter
+                let searchMatch = !searchTerm ||
+                    docName.includes(searchTerm) ||
+                    docSerial.includes(searchTerm) ||
+                    docType.includes(searchTerm);
+
+                if (typeMatch && stockMatch && searchMatch) {
+                    doc.style.display = '';
+                    visibleCount++;
+                } else {
+                    doc.style.display = 'none';
+                }
+            });
+
+            // Show/hide no results message
+            const grid = document.getElementById('documentsGrid');
+            const noResults = document.getElementById('noResultsMessage');
+
+            if (visibleCount === 0) {
+                grid.classList.add('hidden');
+                noResults.classList.remove('hidden');
+            } else {
+                grid.classList.remove('hidden');
+                noResults.classList.add('hidden');
+            }
+
+            showToast(`Showing ${visibleCount} document(s)`, 'info', 2000);
+        }
+
+        function resetFilters() {
+            document.getElementById('typeFilter').value = '';
+            document.getElementById('stockFilter').value = 'all';
+            document.getElementById('searchInput').value = '';
+
+            const documents = document.querySelectorAll('.document-item');
+            documents.forEach(doc => {
+                doc.style.display = '';
+            });
+
+            document.getElementById('documentsGrid').classList.remove('hidden');
+            document.getElementById('noResultsMessage').classList.add('hidden');
+
+            showToast('Filters cleared', 'info', 2000);
+        }
+
+        // Search on enter key
+        document.getElementById('searchInput')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                applyFilters();
+            }
+        });
 
         // Close modals when clicking outside
         window.onclick = function(event) {
-            const addModal = document.getElementById('addModal');
-            const editModal = document.getElementById('editModal');
-            const viewModal = document.getElementById('viewModal');
-            const deleteModal = document.getElementById('deleteModal');
+            const distributeModal = document.getElementById('distributeModal');
+            const bulkModal = document.getElementById('bulkModal');
 
-            if (event.target == addModal) closeAddModal();
-            if (event.target == editModal) closeEditModal();
-            if (event.target == viewModal) closeViewModal();
-            if (event.target == deleteModal) closeDeleteModal();
+            if (event.target == distributeModal) {
+                closeDistributeModal();
+            }
+            if (event.target == bulkModal) {
+                closeBulkModal();
+            }
         }
 
         // ESC key to close modals
         document.addEventListener('keydown', function(event) {
             if (event.key === 'Escape') {
-                closeAddModal();
-                closeEditModal();
-                closeViewModal();
-                closeDeleteModal();
+                closeDistributeModal();
+                closeBulkModal();
             }
         });
     </script>
