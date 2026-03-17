@@ -421,7 +421,7 @@ try {
                     </div>
 
                     <!-- Quick Action Buttons -->
-                    <div class="flex gap-2">
+                 <!--   <div class="flex gap-2">
                         <a href="./parcels.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
                             <i class="fa-solid fa-gift mr-1 text-[#6e6e6e]"></i> Parcels
                         </a>
@@ -431,7 +431,7 @@ try {
                         <a href="./newspaper_categories.php" class="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
                             <i class="fa-solid fa-newspaper mr-1 text-[#6e6e6e]"></i> Newspapers
                         </a>
-                    </div>
+                    </div>-->
                 </div>
             </div>
 

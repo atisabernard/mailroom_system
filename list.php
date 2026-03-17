@@ -556,13 +556,10 @@ include './sidebar.php';
                                 <i class="fa-solid fa-tags"></i>
                                 <span>Add Category</span>
                             </div>
+                            
                             <div class="quick-action-item" onclick="window.location.href='available.php'">
-                                <i class="fa-regular fa-eye"></i>
-                                <span>View Available</span>
-                            </div>
-                            <div class="quick-action-item" onclick="window.location.href='distribution.php'">
                                 <i class="fa-solid fa-clock-rotate-left"></i>
-                                <span>Distribution History</span>
+                                <span>View Available</span>
                             </div>
                         </div>
                     </div>

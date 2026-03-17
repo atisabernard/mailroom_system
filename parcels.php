@@ -662,9 +662,9 @@ $recent_parcels = $conn->query("
                                 <button onclick="exportToCSV()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
                                     <i class="fa-regular fa-file-excel mr-1 text-[#6e6e6e]"></i> Export CSV
                                 </button>
-                                <button onclick="exportToPDF()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
+                               <!-- <button onclick="exportToPDF()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
                                     <i class="fa-regular fa-file-pdf mr-1 text-[#6e6e6e]"></i> Export PDF
-                                </button>
+                                </button>-->
                                 <button onclick="printRecords()" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] flex items-center">
                                     <i class="fa-solid fa-print mr-1 text-[#6e6e6e]"></i> Print
                                 </button>
