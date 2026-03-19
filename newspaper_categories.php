@@ -177,7 +177,8 @@ $result = $conn->query("SELECT * FROM newspaper_categories ORDER BY id DESC");
                             name="name"
                             required
                             placeholder="e.g., Daily News, Sports, Business"
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                            autocomplete='off'>
                     </div>
 
                     <div>

@@ -566,7 +566,8 @@ if ($action == 'list') {
                             <div class="relative">
                                 <input type="text" id="searchInput" placeholder="Search by name or description..."
                                     value="<?php echo htmlspecialchars($filter); ?>"
-                                    class="w-full px-3 py-2 pl-10 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                    class="w-full px-3 py-2 pl-10 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                                    autocomplete="off">
                                 <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-[#9e9e9e] text-sm"></i>
                             </div>
                         </div>
@@ -817,14 +818,16 @@ if ($action == 'list') {
                     <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Type Name *</label>
                     <input type="text" id="typeName" name="type_name" required
                         placeholder="e.g., Legislative Documents"
-                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                        autocomplete="off">
                 </div>
 
                 <div class="mb-4">
                     <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Description</label>
                     <textarea id="typeDescription" name="description" rows="4"
                         placeholder="Optional description"
-                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"></textarea>
+                        class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                        autocomplete="off"></textarea>
                 </div>
 
                 <div class="flex justify-end gap-2">

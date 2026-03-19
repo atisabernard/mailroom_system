@@ -388,7 +388,8 @@ $recent_parcels = $conn->query("
                                 <div class="relative flex-1 md:flex-none">
                                     <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                                     <input type="text" id="receiveSearch" placeholder="Search parcels..."
-                                        class="pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] w-full md:w-64">
+                                        class="pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] w-full md:w-64"
+                                        autocomplete="off">
                                 </div>
                                 <select id="receiveFilter" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
                                     <option value="all">All</option>
@@ -555,7 +556,8 @@ $recent_parcels = $conn->query("
                                 <div class="relative">
                                     <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                                     <input type="text" id="searchPickup" placeholder="Search by tracking ID, sender, or recipient..."
-                                        class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                        class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                                        autocomplete="off">
                                 </div>
                             </div>
                             <select id="statusFilterPickup" class="px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] bg-white">
@@ -698,7 +700,8 @@ $recent_parcels = $conn->query("
                                     <div class="relative flex-1">
                                         <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                                         <input type="text" id="quickSearch" placeholder="Search by tracking ID, sender, recipient, or picker..."
-                                            class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]">
+                                            class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]"
+                                            autocomplete="off">
                                     </div>
                                     <button onclick="applyQuickSearch()" class="px-4 py-2 text-sm border border-[#e5e5e5] rounded-md bg-white hover:bg-[#f5f5f4] text-[#1e1e1e] whitespace-nowrap">
                                         Search
@@ -730,11 +733,11 @@ $recent_parcels = $conn->query("
                                     </div>
                                     <div>
                                         <label class="block text-xs text-[#6e6e6e] mb-1">From Date</label>
-                                        <input type="date" id="dateFrom" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                        <input type="date" id="dateFrom" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]" autocomplete="off">
                                     </div>
                                     <div>
                                         <label class="block text-xs text-[#6e6e6e] mb-1">To Date</label>
-                                        <input type="date" id="dateTo" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                        <input type="date" id="dateTo" class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]" autocomplete="off">
                                     </div>
                                 </div>
 
@@ -886,34 +889,39 @@ $recent_parcels = $conn->query("
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Description <span class="text-red-400">*</span></label>
                         <textarea name="description" rows="3" required
                             class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]"
-                            placeholder="Enter parcel description"></textarea>
+                            placeholder="Enter parcel description"
+                            autocomplete="off"></textarea>
                     </div>
 
                     <div>
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Sender <span class="text-red-400">*</span></label>
                         <input type="text" name="sender" required
                             class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]"
-                            placeholder="Sender name">
+                            placeholder="Sender name"
+                            autocomplete="off">
                     </div>
 
                     <div>
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Addressed To <span class="text-red-400">*</span></label>
                         <input type="text" name="addressed_to" required
                             class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]"
-                            placeholder="Recipient name">
+                            placeholder="Recipient name"
+                            autocomplete="off">
                     </div>
 
                     <div>
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Date Received <span class="text-red-400">*</span></label>
                         <input type="date" name="date_received" required value="<?php echo date('Y-m-d'); ?>"
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]">
+                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]"
+                            autocomplete="off">
                     </div>
 
                     <div>
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Received By <span class="text-red-400">*</span></label>
                         <input type="text" name="received_by" required
                             class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] focus:ring-1 focus:ring-[#9e9e9e]"
-                            placeholder="Staff name">
+                            placeholder="Staff name"
+                            autocomplete="off">
                     </div>
 
                     <div class="md:col-span-2">
@@ -956,28 +964,32 @@ $recent_parcels = $conn->query("
                 <div class="mb-4">
                     <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Tracking ID</label>
                     <input type="text" id="modalTrackingId" readonly
-                        class="w-full px-3 py-2 text-sm bg-[#fafafa] border border-[#e5e5e5] rounded-md">
+                        class="w-full px-3 py-2 text-sm bg-[#fafafa] border border-[#e5e5e5] rounded-md"
+                        autocomplete="off">
                 </div>
 
                 <div class="mb-4">
                     <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Picked By <span class="text-red-400">*</span></label>
                     <input type="text" name="picked_by" required
                         class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                        placeholder="Name of person picking up">
+                        placeholder="Name of person picking up"
+                        autocomplete="off">
                 </div>
 
                 <div class="mb-4">
                     <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Phone Number <span class="text-red-400">*</span></label>
                     <input type="text" name="phone_number" required
                         class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                        placeholder="Contact number">
+                        placeholder="Contact number"
+                        autocomplete="off">
                 </div>
 
                 <div class="mb-4">
                     <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Designation <span class="text-red-400">*</span></label>
                     <input type="text" name="designation" required
                         class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                        placeholder="e.g., Staff, Student, etc.">
+                        placeholder="e.g., Staff, Student, etc."
+                        autocomplete="off">
                 </div>
 
                 <div class="flex justify-end gap-2">

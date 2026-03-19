@@ -773,7 +773,8 @@ if (isset($_SESSION['toast'])) {
 
                         <div class="flex-1 relative">
                             <input type="text" id="searchInput" placeholder="Search by document name, serial number, or type..."
-                                class="w-full px-3 py-1.5 pl-9 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                class="w-full px-3 py-1.5 pl-9 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                                autocomplete="off">
                             <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                         </div>
 
@@ -1064,7 +1065,8 @@ if (isset($_SESSION['toast'])) {
                 <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Common Department (Optional)</label>
                 <input type="text" id="bulkDepartment"
                     placeholder="If all documents go to the same department"
-                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                    class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                    autocomplete="off">
                 <p class="text-xs text-[#6e6e6e] mt-1">Leave blank to enter per-document departments</p>
             </div>
 
@@ -1141,7 +1143,8 @@ if (isset($_SESSION['toast'])) {
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Date Received <span class="text-red-400">*</span></label>
                         <input type="date" id="add_date_received" required
                             value="<?php echo date('Y-m-d'); ?>"
-                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                            class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                            autocomplete="off">
                     </div>
                 </div>
 

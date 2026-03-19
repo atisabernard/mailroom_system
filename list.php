@@ -834,13 +834,15 @@ include './sidebar.php';
                             <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Date Received</label>
                             <input type="date" name="date_received" id="dateReceived" required value="<?php echo date('Y-m-d'); ?>"
                                 onchange="updateIssuePreview()"
-                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                                autocomplete='off'>
                         </div>
                         <div>
                             <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Copies</label>
                             <input type="number" name="copies_received" min="1" required
                                 class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                                placeholder="e.g., 5">
+                                placeholder="e.g., 5"
+                                autocomplete='off'>
                         </div>
                     </div>
 
@@ -848,11 +850,12 @@ include './sidebar.php';
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Received By</label>
                         <input type="text" name="received_by" required
                             class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                            placeholder="Staff name">
+                            placeholder="Staff name" 
+                            autocomplete='off'>
                     </div>
 
                     <div class="text-xs text-[#6e6e6e] bg-[#fafafa] p-2 rounded-md">
-                        <i class="fa-regular fa-circle-info mr-1"></i>
+                        <i class="fa-solid fa-circle-info mr-1"></i>
                         Issue number will be auto-generated based on category and date
                     </div>
                 </div>
@@ -922,7 +925,8 @@ include './sidebar.php';
                         <label class="block text-xs text-[#6e6e6e] uppercase tracking-wide mb-1">Category Name</label>
                         <input type="text" name="category_name" required
                             class="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
-                            placeholder="e.g., Daily News, Sports, Business">
+                            placeholder="e.g., Daily News, Sports, Business"
+                            autocomplete='off'>
                     </div>
 
                     <div>

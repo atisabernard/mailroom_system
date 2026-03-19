@@ -640,7 +640,8 @@ if (isset($_SESSION['toast'])) {
                         <div class="relative">
                             <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-sm text-[#9e9e9e]"></i>
                             <input type="text" id="tableSearch" placeholder="Search records..."
-                                class="pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] w-64">
+                                class="pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e] w-64"
+                                autocomplete="off">
                         </div>
                         <span class="text-xs text-[#6e6e6e]">Total: <?php echo $total_distributions; ?> records</span>
                     </div>
@@ -824,19 +825,7 @@ if (isset($_SESSION['toast'])) {
                             ?>
                         </select>
 
-                        <div class="mt-2 flex flex-wrap gap-3 text-xs">
-                            <a href="available_documents.php" target="_blank" class="text-[#6e6e6e] hover:text-[#1e1e1e] hover:underline flex items-center">
-                                <i class="fa-regular fa-folder-open mr-1"></i> View Available
-                            </a>
-                            <span class="text-[#e5e5e5]">|</span>
-                            <a href="list.php" target="_blank" class="text-[#6e6e6e] hover:text-[#1e1e1e] hover:underline flex items-center">
-                                <i class="fa-regular fa-folder mr-1"></i> Manage Documents
-                            </a>
-                            <span class="text-[#e5e5e5]">|</span>
-                            <a href="document_types.php?action=create" target="_blank" class="text-[#6e6e6e] hover:text-[#1e1e1e] hover:underline flex items-center">
-                                <i class="fa-regular fa-plus mr-1"></i> New Type
-                            </a>
-                        </div>
+                        
                     </div>
 
                     <div>

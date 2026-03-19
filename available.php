@@ -847,7 +847,8 @@ include './sidebar.php';
                                         <input type="text" name="search"
                                             placeholder="Newspaper, recipient, department, staff..."
                                             value="<?php echo htmlspecialchars($search); ?>"
-                                            class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]">
+                                            class="w-full pl-9 pr-3 py-2 text-sm border border-[#e5e5e5] rounded-md focus:outline-none focus:border-[#9e9e9e]"
+                                            autocomplete="off">
                                     </div>
                                 </div>
 
